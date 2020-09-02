@@ -6,6 +6,7 @@ use futures::executor::block_on;
 use std::error;
 
 mod checker;
+mod compare;
 mod fetch;
 
 type Result<T> = std::result::Result<T, Box<dyn error::Error + Send + Sync + 'static>>;
@@ -30,10 +31,8 @@ pub async fn main() {
         .expect("Problems not provided")
         .map(String::from)
         .collect();
-    println!("{:?}", problems);
 
     block_on(checker::check_problems(problems));
-    println!("Finished running")
 }
 
 #[cfg(test)]

@@ -1,19 +1,25 @@
 use crate::Result;
 use std::collections::HashMap;
-use std::error;
+
 use std::io::{Read, Write};
 
 #[derive(Debug, Clone)]
 pub struct ProblemIO {
+    pub name: String,
     pub input: String,
     pub output: String,
 }
 
 impl ProblemIO {
-    pub fn from_tuple(t: (Option<String>, Option<String>)) -> Result<Self> {
-        match t {
-            (Some(input), Some(output)) => Ok(ProblemIO { input, output }),
-            _ => Err("Kattis zip missing input or output".into()),
+    pub fn new(name: String, t: (Option<String>, Option<String>)) -> Result<Self> {
+        if let (Some(input), Some(output)) = t {
+            Ok(ProblemIO {
+                name,
+                input,
+                output,
+            })
+        } else {
+            Err("Kattis zip missing input or output".into())
         }
     }
 }
@@ -41,7 +47,7 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
     .bytes()
     .await?;
 
-    tmpfile.write(&*tmp)?;
+    tmpfile.write_all(&*tmp)?;
 
     let mut zip = zip::ZipArchive::new(tmpfile).unwrap();
     let mut file_names: Vec<_> = zip.file_names().map(String::from).collect();
@@ -55,24 +61,21 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
             .unwrap()
             .read_to_string(&mut s)
             .unwrap();
-        match *io_map
+        let (ref mut i, ref mut o) = *io_map
             .entry(remove_suffix(&file_name, vec![".in", ".ans"]).clone())
-            .or_insert((None, None))
-        {
-            (ref mut i, ref mut o) => {
-                if file_name.ends_with(".in") {
-                    *i = Some(s);
-                } else if file_name.ends_with(".ans") {
-                    *o = Some(s);
-                } else {
-                    return Err("Incompatible input format".into());
-                }
-            }
-        };
+            .or_insert((None, None));
+
+        if file_name.ends_with(".in") {
+            *i = Some(s);
+        } else if file_name.ends_with(".ans") {
+            *o = Some(s);
+        } else {
+            return Err("Incompatible input format".into());
+        }
     }
 
     io_map
         .into_iter()
-        .map(|(_name, io)| ProblemIO::from_tuple(io))
+        .map(|(name, io)| ProblemIO::new(name, io))
         .collect::<Result<Vec<_>>>()
 }
