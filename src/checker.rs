@@ -1,26 +1,26 @@
 use futures::future::join;
 use futures::future::join_all;
-use std::error::Error;
-use std::fs::File;
+
 use std::str::from_utf8;
 use tokio::process::{Child, Command};
 use tokio::spawn;
 
 use crate::fetch::{fetch_problem, ProblemIO};
 use crate::Result;
+use colored::Colorize;
 use futures::prelude::stream::*;
-use futures::stream::{StreamExt, TryStreamExt};
-use futures::TryFutureExt;
-use std::convert::TryInto;
+use futures::stream::TryStreamExt;
+
 use std::ffi::OsStr;
 use std::fmt;
 use std::fmt::Formatter;
 use std::io;
-use std::io::{Cursor, Write};
-use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, ExitStatus, Output, Stdio};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
-use walkdir::DirEntry;
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::{Output, Stdio};
+
+use crate::compare::compare;
+use tokio::io::AsyncWriteExt;
 
 pub async fn check_problems(problems: Vec<String>) {
     join_all(
@@ -56,10 +56,13 @@ impl Program {
         Ok(Program {
             lang: match path.extension() {
                 Some(ext) => match ext.to_str() {
-                    Some(".cpp") => Lang::Cpp,
-                    Some(".py") => Lang::Python,
+                    Some("cpp") => Lang::Cpp,
+                    Some("py") => Lang::Python,
+                    Some(e) => {
+                        return Err(format!("Filetype {} is not supported", e).into());
+                    }
                     _ => {
-                        return Err("Filetype not supported".into());
+                        return Err("Filetype could not be read".into());
                     }
                 },
                 _ => {
@@ -70,6 +73,7 @@ impl Program {
             binary: None,
         })
     }
+
     pub async fn compile(&mut self) -> Result<()> {
         match self.lang {
             Lang::Cpp => {
@@ -87,7 +91,7 @@ impl Program {
                 Ok(())
             }
             Lang::Python => {
-                self.binary = Some(self.source.clone().into());
+                self.binary = Some(self.source.clone());
                 Ok(())
             }
         }
@@ -98,11 +102,13 @@ impl Program {
             match self.lang {
                 Lang::Cpp => Command::new(bin)
                     .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
                     .spawn()
                     .map_err(|_| "Failed to spawn C++ program".into()),
                 Lang::Python => Command::new("python")
-                    .arg("bin")
+                    .arg(bin)
                     .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
                     .spawn()
                     .map_err(|_| "Failed to spawn Python program".into()),
             }
@@ -111,11 +117,16 @@ impl Program {
         }
     }
 
-    async fn run_problem(&self, i: &String) -> Result<Output> {
+    async fn run_problem(&'a self, pio: &'a ProblemIO) -> Result<(&'a ProblemIO, Output)> {
         match self.spawn_process() {
             Ok(mut child) => {
-                child.stdin.as_mut().unwrap().write(i.as_bytes()).await?;
-                Ok(child.wait_with_output().await.unwrap())
+                child
+                    .stdin
+                    .as_mut()
+                    .unwrap()
+                    .write(pio.input.as_bytes())
+                    .await?;
+                Ok((&pio, child.wait_with_output().await.unwrap()))
             }
             Err(e) => Err(e),
         }
@@ -123,12 +134,11 @@ impl Program {
 
     pub fn run_problems(
         &'a self,
-        ios: &'a Vec<ProblemIO>,
-    ) -> Result<impl Stream<Item = Result<Output>> + 'a> {
-        let mut tasks = FuturesUnordered::new();
-        for (i, pio) in ios.into_iter().enumerate() {
-            let input = &pio.input;
-            let task = self.run_problem(input);
+        ios: &'a [ProblemIO],
+    ) -> Result<impl Stream<Item = Result<(&ProblemIO, Output)>> + 'a> {
+        let tasks = FuturesUnordered::new();
+        for (_i, pio) in ios.iter().enumerate() {
+            let task = self.run_problem(pio);
             tasks.push(task);
         }
         Ok(tasks)
@@ -160,7 +170,6 @@ pub fn find_source(problem_name: &str) -> Result<Vec<PathBuf>> {
 
 /// Compiles, fetches, runs and compares problem
 async fn check_problem(problem_name: &str) -> Result<()> {
-    println!("{}", problem_name);
     //Ok(())
     // Fetch problem IO
     let future_io = fetch_problem(problem_name);
@@ -168,11 +177,18 @@ async fn check_problem(problem_name: &str) -> Result<()> {
     // Find source paths
     let source = find_source(problem_name)?;
     if source.is_empty() {
+        println!("{}", problem_name.bright_white().bold());
         println!(
-            "Found no source code for problem {}. \
-        Make sure that the file exists with one of the supported extensions.\n",
-            problem_name
+            "{}",
+            format!(
+                "{}{}{}",
+                "Found no source code for problem ".red(),
+                problem_name.red().bold(),
+                ". Make sure that the file exists with one of the supported extensions.\n".red()
+            )
+            .red()
         );
+        return Ok(());
     }
 
     // Create programs
@@ -188,20 +204,30 @@ async fn check_problem(problem_name: &str) -> Result<()> {
     )
     .await;
 
-    let io = io?;
-
-    let io_borrow = &io;
+    let io = &io?;
 
     // Run
-    let _run_results = join_all(programs.iter().map(async move |program| -> Result<()> {
-        let mut result_stream = program.run_problems(io_borrow)?;
-        while let Some(out) = result_stream.try_next().await? {
-            let output_string = from_utf8(out.stdout.as_slice())?;
-            println!("{}", output_string);
-        }
-        Ok(())
-    }));
+    let _run_results = join(
+        join_all(programs.iter().map(async move |program| -> Result<()> {
+            let mut result_stream = program.run_problems(io)?;
+            while let Some((pio, out)) = result_stream.try_next().await? {
+                let output_string = from_utf8(out.stdout.as_slice())?;
+                println!(
+                    "{}\n{}",
+                    &pio.name.yellow().bold(),
+                    compare(&output_string.to_string(), &pio.output)
+                );
+            }
+            Ok(())
+        })),
+        async move {
+            println!("{}", problem_name.bold().bright_white());
+        },
+    )
+    .await;
+
+    println!();
+
     // for ProblemIO { input, output } in io {}
-    println!("Checked problem {}", problem_name);
     Ok(())
 }
