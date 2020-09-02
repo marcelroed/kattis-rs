@@ -1,3 +1,5 @@
+#![feature(in_band_lifetimes)]
+#![feature(async_closure)]
 use clap::{App, Arg};
 
 use futures::executor::block_on;
@@ -6,7 +8,7 @@ use std::error;
 mod checker;
 mod fetch;
 
-type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
+type Result<T> = std::result::Result<T, Box<dyn error::Error + Send + Sync + 'static>>;
 
 #[tokio::main]
 pub async fn main() {
