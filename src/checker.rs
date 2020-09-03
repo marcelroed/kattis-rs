@@ -11,7 +11,6 @@ use colored::Colorize;
 use futures::prelude::stream::*;
 use futures::stream::TryStreamExt;
 
-use std::ffi::OsStr;
 use std::fmt;
 use std::fmt::Formatter;
 use std::io;
@@ -20,6 +19,8 @@ use std::path::PathBuf;
 use std::process::{Output, Stdio};
 
 use crate::compare::compare;
+use enum_iterator::IntoEnumIterator;
+use itertools::any;
 use tokio::io::AsyncWriteExt;
 
 pub async fn check_problems(problems: Vec<String>) {
@@ -48,6 +49,14 @@ impl fmt::Display for RuntimeError {
 impl fmt::Debug for RuntimeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Program failed during runtime")
+    }
+}
+
+impl Drop for Program {
+    fn drop(&mut self) {
+        if let (true, Some(path)) = (&self.lang.compiled(), &self.binary) {
+            std::fs::remove_file(path).ok();
+        }
     }
 }
 
@@ -148,6 +157,30 @@ impl Program {
 enum Lang {
     Cpp,
     Python,
+}
+
+impl Lang {
+    pub fn compiled(&self) -> bool {
+        match self {
+            Lang::Cpp => true,
+            Lang::Python => false,
+        }
+    }
+    pub fn extension(&self) -> String {
+        match self {
+            Lang::Cpp => "cpp",
+            Lang::Python => "py",
+        }
+        .to_string()
+    }
+
+    pub fn from_extension(ext: &str) -> Option<Self> {
+        match ext {
+            "cpp" => Some(Lang::Cpp),
+            "py" => Some(Lang::Python),
+            _ => None,
+        }
+    }
 }
 
 pub fn find_source(problem_name: &str) -> Result<Vec<PathBuf>> {
