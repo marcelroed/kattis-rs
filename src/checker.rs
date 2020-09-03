@@ -13,8 +13,6 @@ use futures::stream::TryStreamExt;
 
 use std::fmt;
 use std::fmt::Formatter;
-use std::io;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Output, Stdio};
 
@@ -85,7 +83,7 @@ impl Program {
         })
     }
 
-    pub async fn compile(&mut self) -> Result<()> {
+    pub async fn compile(&mut self) -> std::result::Result<(), String> {
         match self.lang {
             Lang::Cpp => {
                 let mut output_path = std::env::temp_dir();
@@ -100,12 +98,18 @@ impl Program {
                     .arg("-o")
                     .arg(&output_path)
                     .output()
-                    .await?;
+                    .await
+                    .expect("Couldn't compile C++ program. Make sure gnu g++ is installed and in path (this is the compiler that kattis uses).");
 
-                io::stderr().write_all(&output.stderr)?;
-                // io::stdout().write_all(&output.stderr)?;
                 self.binary = Some(output_path.to_owned());
-                Ok(())
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let mut err =
+                        format!("{}\n", self.source.file_name().unwrap().to_str().unwrap());
+                    err.push_str(&String::from_utf8(output.stderr).unwrap());
+                    Err(err)
+                }
             }
             Lang::Python => {
                 self.binary = Some(self.source.clone());
@@ -117,19 +121,17 @@ impl Program {
     fn spawn_process(&self) -> Result<Child> {
         if let Some(bin) = &self.binary {
             match self.lang {
-                Lang::Cpp => {
-                    let loc = bin.to_str().unwrap();
-                    Ok(Command::new(loc)
-                        .stdin(Stdio::piped())
-                        .stdout(Stdio::piped())
-                        .spawn()?)
-                }
-                Lang::Python => Command::new("python")
-                    .arg(bin)
+                Lang::Cpp => Ok(Command::new(bin)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .spawn()
-                    .map_err(|_| "Failed to spawn Python program".into()),
+                    .stderr(Stdio::piped())
+                    .spawn()?),
+                Lang::Python => Ok(Command::new("python")
+                    .arg(bin)
+                    .stdin(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()?),
             }
         } else {
             Err("Program not compiled".into())
@@ -228,12 +230,19 @@ async fn check_problem(problem_name: &str) -> Result<()> {
         println!(
             "{}",
             format!(
-                "{}{}{}",
-                "Found no source code for problem ".red(),
-                problem_name.red().bold(),
-                ". Make sure that the file exists with one of the supported extensions.\n".red()
+                "{}{}{} ({}).\n",
+                "Found no source code for problem ",
+                problem_name.bold(),
+                ". Make sure that the file exists with one of the supported extensions\n".red(),
+                format!(
+                    "{}",
+                    Lang::into_enum_iter()
+                        .map(|e| e.extension())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                ),
             )
-            .red()
+            .red(),
         );
         return Ok(());
     }
@@ -245,38 +254,92 @@ async fn check_problem(problem_name: &str) -> Result<()> {
         .collect();
 
     // Compile programs and fetch io
-    let (_, io) = join(
-        join_all(programs.iter_mut().map(|p| p.compile())),
+    let (compiled_programs, io) = join(
+        join_all(programs.iter_mut().map(|p| async move {
+            match p.compile().await {
+                Ok(()) => Ok(p),
+                Err(e) => Err(e),
+            }
+        })),
         future_io,
     )
     .await;
 
+    let compiled_programs = compiled_programs.into_iter().collect::<Vec<_>>();
+
     let io = &io?;
 
     // Run
-    let _run_results = join(
-        join_all(programs.iter().map(async move |program| -> Result<()> {
-            let mut result_stream = program.run_problems(io)?;
-            while let Some((pio, out)) = result_stream.try_next().await? {
-                let output_string = from_utf8(out.stdout.as_slice())?;
-                println!(
-                    "{}\n{}",
-                    &pio.name.yellow().bold(),
-                    compare(&output_string.to_string(), &pio.output)
-                );
+    let run_results = join_all(compiled_programs.iter().map(
+        async move |program_result| -> std::result::Result<String, String> {
+            match program_result {
+                Ok(program) => {
+                    let mut result_stream = program.run_problems(io).unwrap();
+                    let mut to_print = format!(
+                        "{}\n",
+                        program.source.file_name().unwrap().to_str().unwrap()
+                    );
+                    while let Some((pio, out)) = result_stream.try_next().await.unwrap() {
+                        if out.status.success() {
+                            let output_string = from_utf8(out.stdout.as_slice()).unwrap();
+                            to_print.push_str(&format!(
+                                "{}\n{}\n",
+                                &pio.name.yellow().bold(),
+                                compare(&output_string.to_string(), &pio.output)
+                            ));
+                        } else {
+                            let runtime_error = from_utf8(out.stderr.as_slice()).unwrap();
+                            let output_before_crash = from_utf8(out.stdout.as_slice()).unwrap();
+                            to_print.push_str(&format!(
+                                "{}\n{}{}{}\n{}\n",
+                                &pio.name.yellow().bold(),
+                                "Runtime error in ".bright_red(),
+                                program
+                                    .source
+                                    .file_name()
+                                    .unwrap()
+                                    .to_str()
+                                    .unwrap()
+                                    .bold()
+                                    .bright_red(),
+                                ":".bright_red(),
+                                runtime_error
+                            ));
+                            if output_before_crash.len() > 0 {
+                                to_print.push_str(&format!(
+                                    "{}{}{}\n{}",
+                                    "Before crashing, ".bright_red(),
+                                    program
+                                        .source
+                                        .file_name()
+                                        .unwrap()
+                                        .to_str()
+                                        .unwrap()
+                                        .bold()
+                                        .bright_red(),
+                                    " outputted:".bright_red(),
+                                    output_before_crash
+                                ));
+                            } else {
+                                //to_print.push_str("Nothing printed before crash.");
+                            }
+                        }
+                    }
+                    Ok(to_print)
+                }
+                Err(compile_error) => {
+                    let compile_error = compile_error.to_owned();
+                    Err(compile_error)
+                }
             }
-            Ok(())
-        })),
-        async move {
-            println!("{}", problem_name.bold().bright_white());
         },
-    )
-    .await
-    .0
-    .into_iter()
-    .for_each(|r| r.unwrap());
-
-    println!();
+    ))
+    .await;
+    println!("{}", problem_name.bold().bright_white());
+    run_results.into_iter().for_each(|r| match r {
+        Ok(comparison_result) => println!("{}", comparison_result),
+        Err(compile_error) => println!("{}", compile_error),
+    });
 
     Ok(())
 }
