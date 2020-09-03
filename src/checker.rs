@@ -65,10 +65,12 @@ impl Program {
         Ok(Program {
             lang: match path.extension() {
                 Some(ext) => match ext.to_str() {
-                    Some("cpp") => Lang::Cpp,
-                    Some("py") => Lang::Python,
-                    Some(e) => {
-                        return Err(format!("Filetype {} is not supported", e).into());
+                    Some(x) => {
+                        let lang_opt = Lang::from_extension(x);
+                        match lang_opt {
+                            Some(l) => l,
+                            None => return Err("Filetype could not be read".into()),
+                        }
                     }
                     _ => {
                         return Err("Filetype could not be read".into());
@@ -86,17 +88,23 @@ impl Program {
     pub async fn compile(&mut self) -> Result<()> {
         match self.lang {
             Lang::Cpp => {
-                let output_file: &OsStr = self.source.file_stem().unwrap();
+                let mut output_path = std::env::temp_dir();
+                output_path.push("kattis/");
+                output_path.push(format!(
+                    "cpp-{}",
+                    self.source.file_stem().unwrap().to_str().unwrap()
+                ));
 
                 let output = Command::new("g++")
                     .arg(self.source.as_os_str())
-                    .arg(format!("-o {}", output_file.to_str().unwrap()))
+                    .arg("-o")
+                    .arg(&output_path)
                     .output()
                     .await?;
 
                 io::stderr().write_all(&output.stderr)?;
                 // io::stdout().write_all(&output.stderr)?;
-                self.binary = Some(PathBuf::from(output_file));
+                self.binary = Some(output_path.to_owned());
                 Ok(())
             }
             Lang::Python => {
@@ -109,11 +117,13 @@ impl Program {
     fn spawn_process(&self) -> Result<Child> {
         if let Some(bin) = &self.binary {
             match self.lang {
-                Lang::Cpp => Command::new(bin)
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .spawn()
-                    .map_err(|_| "Failed to spawn C++ program".into()),
+                Lang::Cpp => {
+                    let loc = bin.to_str().unwrap();
+                    Ok(Command::new(loc)
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .spawn()?)
+                }
                 Lang::Python => Command::new("python")
                     .arg(bin)
                     .stdin(Stdio::piped())
@@ -135,7 +145,8 @@ impl Program {
                     .unwrap()
                     .write(pio.input.as_bytes())
                     .await?;
-                Ok((&pio, child.wait_with_output().await.unwrap()))
+                let results = child.wait_with_output().await.unwrap();
+                Ok((&pio, results))
             }
             Err(e) => Err(e),
         }
@@ -154,6 +165,7 @@ impl Program {
     }
 }
 
+#[derive(IntoEnumIterator, PartialEq, Clone, Eq)]
 enum Lang {
     Cpp,
     Python,
@@ -190,7 +202,10 @@ pub fn find_source(problem_name: &str) -> Result<Vec<PathBuf>> {
         .filter_map(|f| {
             if let Ok(de) = f {
                 if let Some(s) = de.file_name().to_str() {
-                    if s.starts_with(problem_name) {
+                    let ends_with_extension = |l: Lang| s.ends_with(&format!(".{}", l.extension()));
+                    if s.starts_with(&format!("{}.", problem_name))
+                        && any(Lang::into_enum_iter(), ends_with_extension)
+                    {
                         return Some(de.path().to_path_buf());
                     }
                 }
@@ -203,7 +218,6 @@ pub fn find_source(problem_name: &str) -> Result<Vec<PathBuf>> {
 
 /// Compiles, fetches, runs and compares problem
 async fn check_problem(problem_name: &str) -> Result<()> {
-    //Ok(())
     // Fetch problem IO
     let future_io = fetch_problem(problem_name);
 
@@ -257,10 +271,26 @@ async fn check_problem(problem_name: &str) -> Result<()> {
             println!("{}", problem_name.bold().bright_white());
         },
     )
-    .await;
+    .await
+    .0
+    .into_iter()
+    .for_each(|r| r.unwrap());
 
     println!();
 
-    // for ProblemIO { input, output } in io {}
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use crate::checker::Lang;
+    use enum_iterator::IntoEnumIterator;
+
+    #[test]
+    fn complete_langs() {
+        let langs = Lang::into_enum_iter();
+        for lang in langs {
+            assert!(Lang::from_extension(&lang.extension()).unwrap() == lang);
+        }
+    }
 }
