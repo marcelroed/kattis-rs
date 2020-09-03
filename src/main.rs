@@ -13,6 +13,11 @@ type Result<T> = std::result::Result<T, Box<dyn error::Error + Send + Sync + 'st
 
 #[tokio::main]
 pub async fn main() {
+    // Create folder in tmp if it doesn't already exist
+    let mut kattis_temp = std::env::temp_dir();
+    kattis_temp.push("kattis/");
+
+    std::fs::create_dir_all(kattis_temp).unwrap();
     let matches = App::new("Kattis Tester")
         .version("0.1")
         .author("Marcel Rød")
