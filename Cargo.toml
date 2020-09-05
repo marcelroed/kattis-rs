@@ -3,13 +3,15 @@ name = "kattis-rs"
 version = "0.2.0"
 authors = ["Marcel H Rød <marcelroed@gmail.com>"]
 edition = "2018"
+homepage = "https://github.com/marcelroed/"
+repository = "https://github.com/marcelroed/kattis-rs"
 description = "Competitive programming checker for open.kattis.com"
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
-name = "kattis"
+name = "kattis-rs"
 path = "src/main.rs"
 
 
