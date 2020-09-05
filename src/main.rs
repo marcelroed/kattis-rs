@@ -18,24 +18,29 @@ pub async fn main() {
     kattis_temp.push("kattis/");
 
     std::fs::create_dir_all(kattis_temp).unwrap();
-    let matches = App::new("Kattis Tester")
+    let mut app = App::new("Kattis Tester")
         .version("0.1")
         .author("Marcel Rød")
         .about("Tests Kattis competitive programming problems.")
         .arg(Arg::new("problems")
-            // .short('p')
             .about("Names of the problems to test. The format needs to be {problem} in open.kattis.com/problems/{problem}")
-            .required(true)
+            .required(false)
             .multiple(true)
             .value_name("PROBLEMS")
-        )
-        .get_matches();
+        );
+    let matches = app.get_matches_mut();
 
-    let problems: Vec<_> = matches
-        .values_of("problems")
-        .expect("Problems not provided")
-        .map(String::from)
-        .collect();
+    let problems: Vec<_> = match matches.values_of("problems") {
+        Some(problem_names) => problem_names.map(String::from).collect(),
+        None => match checker::find_newest_source() {
+            Ok(pname) => vec![pname],
+            Err(e) => {
+                eprintln!("Although kattis can be used without arguments, this requires the latest edited submittable in this directory to be a kattis file.\nEncountered error: {}\nPerhaps you wanted the regular usage?", e.to_string());
+                eprintln!("{}", app.generate_usage());
+                std::process::exit(0);
+            }
+        },
+    };
 
     block_on(checker::check_problems(problems));
 }
