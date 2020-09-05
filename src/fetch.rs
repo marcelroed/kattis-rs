@@ -79,3 +79,12 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
         .map(|(name, io)| ProblemIO::new(name, io))
         .collect::<Result<Vec<_>>>()
 }
+
+pub async fn problem_exists(problem_name: &str) -> Result<bool> {
+    let str = reqwest::get(format!("https://open.kattis.com/problems/{}", problem_name).as_str())
+        .await?
+        .text()
+        .await?;
+
+    Ok(!str.contains("404: Not Found"))
+}
