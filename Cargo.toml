@@ -1,6 +1,6 @@
 [package]
 name = "kattis-rs"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Marcel H Rød <marcelroed@gmail.com>"]
 edition = "2018"
 description = "Competitive programming checker for open.kattis.com"
