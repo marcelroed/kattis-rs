@@ -18,6 +18,7 @@ use std::process::{Output, Stdio};
 
 use crate::compare::compare;
 use enum_iterator::IntoEnumIterator;
+use futures::executor::block_on;
 use itertools::any;
 use tokio::io::AsyncWriteExt;
 
@@ -99,7 +100,7 @@ impl Program {
                     .arg(&output_path)
                     .output()
                     .await
-                    .expect("Couldn't compile C++ program. Make sure gnu g++ is installed and in path (this is the compiler that kattis uses).");
+                    .expect("Couldn't compile C++ program. Make sure GNU g++ is installed and in path (this is the compiler that kattis uses).");
 
                 self.binary = Some(output_path.to_owned());
                 if output.status.success() {
@@ -108,6 +109,33 @@ impl Program {
                     let mut err =
                         format!("{}\n", self.source.file_name().unwrap().to_str().unwrap());
                     err.push_str(&String::from_utf8(output.stderr).unwrap());
+                    Err(err)
+                }
+            }
+            Lang::Rust => {
+                let mut output_path = std::env::temp_dir();
+                output_path.push("kattis/");
+                output_path.push(format!(
+                    "rs-{}",
+                    self.source.file_stem().unwrap().to_str().unwrap()
+                ));
+
+                let output = Command::new("rustc")
+                    .arg(self.source.as_os_str())
+                    .arg("-o")
+                    .arg(&output_path)
+                    .arg("--color=always")
+                    .output()
+                    .await
+                    .expect("Couldn't compile Rust program. Make sure rustc is installed and in path (this is the compiler that kattis uses).");
+
+                self.binary = Some(output_path.to_owned());
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let mut err =
+                        format!("{}\n", self.source.file_name().unwrap().to_str().unwrap());
+                    err.push_str(&String::from_utf8_lossy(&output.stderr).into_owned());
                     Err(err)
                 }
             }
@@ -121,7 +149,7 @@ impl Program {
     fn spawn_process(&self) -> Result<Child> {
         if let Some(bin) = &self.binary {
             match self.lang {
-                Lang::Cpp => Ok(Command::new(bin)
+                Lang::Cpp | Lang::Rust => Ok(Command::new(bin)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -171,18 +199,21 @@ impl Program {
 enum Lang {
     Cpp,
     Python,
+    Rust,
 }
 
 impl Lang {
     pub fn compiled(&self) -> bool {
         match self {
             Lang::Cpp => true,
+            Lang::Rust => true,
             Lang::Python => false,
         }
     }
     pub fn extension(&self) -> String {
         match self {
             Lang::Cpp => "cpp",
+            Lang::Rust => "rs",
             Lang::Python => "py",
         }
         .to_string()
@@ -192,6 +223,7 @@ impl Lang {
         match ext {
             "cpp" => Some(Lang::Cpp),
             "py" => Some(Lang::Python),
+            "rs" => Some(Lang::Rust),
             _ => None,
         }
     }
@@ -218,6 +250,41 @@ pub fn find_source(problem_name: &str) -> Result<Vec<PathBuf>> {
     Ok(result)
 }
 
+pub fn find_newest_source() -> Result<String> {
+    let result = walkdir::WalkDir::new(".")
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|f| {
+            if let Ok(de) = f {
+                if let Some(s) = de.file_name().to_str() {
+                    let ends_with_extension = |l: Lang| s.ends_with(&format!(".{}", l.extension()));
+                    if any(Lang::into_enum_iter(), ends_with_extension) {
+                        return Some(de);
+                    }
+                }
+            }
+            None
+        })
+        .max_by_key(|de| de.metadata().unwrap().modified().unwrap())
+        .map(|de| de.path().file_stem().unwrap().to_str().unwrap().to_string())
+        .ok_or_else(|| "No source found".into());
+
+    match result {
+        Ok(pname) => {
+            if block_on(crate::fetch::problem_exists(pname.as_str()))? {
+                Ok(pname)
+            } else {
+                Err(format!(
+                    "Problem name {} does not exist on open.kattis.com",
+                    pname.as_str().bold()
+                )
+                .into())
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Compiles, fetches, runs and compares problem
 async fn check_problem(problem_name: &str) -> Result<()> {
     // Fetch problem IO
@@ -234,13 +301,10 @@ async fn check_problem(problem_name: &str) -> Result<()> {
                 "Found no source code for problem ",
                 problem_name.bold(),
                 ". Make sure that the file exists with one of the supported extensions\n".red(),
-                format!(
-                    "{}",
-                    Lang::into_enum_iter()
-                        .map(|e| e.extension())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                ),
+                Lang::into_enum_iter()
+                    .map(|e| e.extension())
+                    .collect::<Vec<String>>()
+                    .join(", ")
             )
             .red(),
         );
@@ -283,7 +347,7 @@ async fn check_problem(problem_name: &str) -> Result<()> {
                         if out.status.success() {
                             let output_string = from_utf8(out.stdout.as_slice()).unwrap();
                             to_print.push_str(&format!(
-                                "{}\n{}\n",
+                                "{}\n{}\n\n",
                                 &pio.name.yellow().bold(),
                                 compare(&output_string.to_string(), &pio.output)
                             ));
@@ -305,9 +369,9 @@ async fn check_problem(problem_name: &str) -> Result<()> {
                                 ":".bright_red(),
                                 runtime_error
                             ));
-                            if output_before_crash.len() > 0 {
+                            if output_before_crash.is_empty() {
                                 to_print.push_str(&format!(
-                                    "{}{}{}\n{}",
+                                    "{}{}{}\n{}\n",
                                     "Before crashing, ".bright_red(),
                                     program
                                         .source
@@ -337,8 +401,8 @@ async fn check_problem(problem_name: &str) -> Result<()> {
     .await;
     println!("{}", problem_name.bold().bright_white());
     run_results.into_iter().for_each(|r| match r {
-        Ok(comparison_result) => println!("{}", comparison_result),
-        Err(compile_error) => println!("{}", compile_error),
+        Ok(comparison_result) => print!("{}", comparison_result),
+        Err(compile_error) => print!("{}", compile_error),
     });
 
     Ok(())
