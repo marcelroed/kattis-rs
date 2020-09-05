@@ -32,7 +32,11 @@ impl<'a> std::fmt::Display for CompareResult<'a> {
                 for inner in it {
                     match inner {
                         (wrong_line, Some(correction)) => {
-                            error_block_buf.0.push(wrong_line.red());
+                            if wrong_line.is_empty() {
+                                error_block_buf.0.push(" ".on_red());
+                            } else {
+                                error_block_buf.0.push(wrong_line.red());
+                            }
                             error_block_buf.1.push(correction.green());
                         }
                         (correct_line, _) => {
@@ -51,7 +55,7 @@ impl<'a> std::fmt::Display for CompareResult<'a> {
 
                 correction.into_iter().map(|cs| cs.to_string()).join("\n")
             }
-            None => "Success".green().to_string(),
+            None => "Success".green().bold().to_string(),
         };
         write!(f, "{}", output)
     }
