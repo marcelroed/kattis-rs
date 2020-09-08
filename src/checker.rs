@@ -369,7 +369,7 @@ async fn check_problem(problem_name: &str) -> Result<()> {
                                 ":".bright_red(),
                                 runtime_error
                             ));
-                            if output_before_crash.is_empty() {
+                            if !output_before_crash.is_empty() {
                                 to_print.push_str(&format!(
                                     "{}{}{}\n{}\n",
                                     "Before crashing, ".bright_red(),
