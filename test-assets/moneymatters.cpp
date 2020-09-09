@@ -71,5 +71,6 @@ int main(){
           return 0;
       }
   }
+  alsdkfalfj compiler error!
   cout << "POSSIBLE";
 }

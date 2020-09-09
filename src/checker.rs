@@ -98,6 +98,8 @@ impl Program {
                     .arg(self.source.as_os_str())
                     .arg("-o")
                     .arg(&output_path)
+                    .arg("-fdiagnostics-color=always") // Colored output
+                    .arg("-g").arg("-O2").arg("-std=gnu++17") // Kattis standards as of Sep 2020
                     .output()
                     .await
                     .expect("Couldn't compile C++ program. Make sure GNU g++ is installed and in path (this is the compiler that kattis uses).");
