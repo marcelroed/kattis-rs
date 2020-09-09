@@ -80,7 +80,7 @@ fn line_eq(text: &str, key: &str) -> bool {
         }
         in_text
     });
-    return rounded.eq(key);
+    rounded.eq(key)
 }
 
 fn compare_lines(text: &'a str, key: &'a str) -> (&'a str, Option<&'a str>) {
