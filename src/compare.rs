@@ -6,13 +6,21 @@ use std::fmt::Formatter;
 
 use regex::{Captures, Regex};
 
+#[derive(Debug, Clone)]
+pub enum LineStatus<'a> {
+    Wrong(&'a str, &'a str), // Wrong, correction
+    Correct(&'a str),        // Correct
+    Missing(&'a str),        // Missing
+    Overpresent(&'a str),    // Line past output
+}
+
 pub struct CompareResult<'a> {
-    failed: Option<Vec<(&'a str, Option<&'a str>)>>,
+    failed: Option<Vec<LineStatus<'a>>>,
 }
 
 impl<'a> CompareResult<'a> {
-    pub fn new(x: Vec<(&'a str, Option<&'a str>)>) -> Self {
-        let failed = if (&x).iter().all(|x| x.1.is_none()) {
+    pub fn new(x: Vec<LineStatus<'a>>) -> Self {
+        let failed = if (&x).iter().all(|x| matches!(x, LineStatus::Correct(_))) {
             None
         } else {
             Some(x)
@@ -26,14 +34,15 @@ impl<'a> std::fmt::Display for CompareResult<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let output = match &self.failed {
             Some(failures) => {
-                // Want to group into error blocks
+                // Group into error blocks
                 let mut correction: Vec<ColoredString> = Vec::new();
                 let it = failures.iter();
 
+                // (error buffer, correction buffer)
                 let mut error_block_buf = (Vec::new(), Vec::new());
                 for inner in it {
                     match inner {
-                        (wrong_line, Some(correction)) => {
+                        LineStatus::Wrong(wrong_line, correction) => {
                             if wrong_line.is_empty() {
                                 error_block_buf.0.push(" ".on_red());
                             } else {
@@ -41,12 +50,31 @@ impl<'a> std::fmt::Display for CompareResult<'a> {
                             }
                             error_block_buf.1.push(correction.green());
                         }
-                        (correct_line, _) => {
+                        LineStatus::Correct(correct_line) => {
                             correction.append(&mut error_block_buf.0);
                             correction.append(&mut error_block_buf.1);
                             error_block_buf.0.clear();
                             error_block_buf.1.clear();
                             correction.push(correct_line.white());
+                        }
+                        LineStatus::Missing(missing_line) => {
+                            // if !error_block_buf.0.is_empty() {
+                            //     correction.append(&mut error_block_buf.0);
+                            //     correction.append(&mut error_block_buf.1);
+                            // }
+                            // error_block_buf.0.clear();
+                            // error_block_buf.1.clear();
+                            error_block_buf.0.push(" ".on_red());
+                            error_block_buf.1.push(missing_line.green());
+                        }
+                        LineStatus::Overpresent(overpresent_line) => {
+                            error_block_buf.0.push({
+                                if overpresent_line.is_empty() {
+                                    " ".on_red()
+                                } else {
+                                    overpresent_line.red()
+                                }
+                            });
                         }
                     }
                 }
@@ -83,16 +111,16 @@ fn line_eq(text: &str, key: &str) -> bool {
     rounded.eq(key)
 }
 
-fn compare_lines(text: &'a str, key: &'a str) -> (&'a str, Option<&'a str>) {
+fn compare_lines(text: &'a str, key: &'a str) -> LineStatus<'a> {
     const TO_STRIP: &[char] = &['\n', ' ', '\t', '\r'];
     let pat = |c| TO_STRIP.contains(&c);
     let orig = text.trim_matches(pat).trim_matches(pat);
     let other = key.trim_matches(pat).trim_matches(pat);
 
     if line_eq(orig, other) {
-        (orig, None)
+        LineStatus::Correct(orig)
     } else {
-        (orig, Some(other))
+        LineStatus::Wrong(orig, other)
     }
 }
 
@@ -104,11 +132,16 @@ pub fn compare(output: &'a str, key: &'a str) -> CompareResult<'a> {
         .into_iter()
         .zip_longest(key.into_iter())
         .map(|eob| match eob {
-            EitherOrBoth::Both(l, r) => (l, r),
-            EitherOrBoth::Left(l) => (l, ""),
-            EitherOrBoth::Right(r) => ("", r),
+            EitherOrBoth::Both(l, r) => (Some(l), Some(r)),
+            EitherOrBoth::Left(l) => (Some(l), None),
+            EitherOrBoth::Right(r) => (None, Some(r)),
         })
-        .map(|(o, k)| compare_lines(o, k))
+        .map(|out_key| match out_key {
+            (Some(o), Some(k)) => compare_lines(o, k),
+            (None, Some(k)) => LineStatus::Missing(k),
+            (Some(o), None) => LineStatus::Overpresent(o),
+            _ => unreachable!(),
+        })
         .collect();
 
     CompareResult::new(comparisons)
