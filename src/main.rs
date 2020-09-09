@@ -4,6 +4,7 @@ use clap::{App, Arg};
 
 use futures::executor::block_on;
 use std::error;
+use tokio::io;
 
 mod checker;
 mod compare;
@@ -11,15 +12,15 @@ mod fetch;
 
 type Result<T> = std::result::Result<T, Box<dyn error::Error + Send + Sync + 'static>>;
 
-const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
-pub async fn main() {
+pub async fn main() -> io::Result<()> {
     // Create folder in tmp if it doesn't already exist
-    let mut kattis_temp = std::env::temp_dir();
-    kattis_temp.push("kattis/");
+    if let Err(e) = fetch::initialize_temp_dir() {
+        eprintln!("{}", e);
+    }
 
-    std::fs::create_dir_all(kattis_temp).unwrap();
     let mut app = App::new("Kattis Tester")
         .version(VERSION)
         .author("Marcel Rød")
@@ -51,6 +52,7 @@ pub async fn main() {
     };
 
     block_on(checker::check_problems(problems));
+    Ok(())
 }
 
 #[cfg(test)]
