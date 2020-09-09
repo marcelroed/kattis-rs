@@ -4,6 +4,8 @@ use itertools::Itertools;
 
 use std::fmt::Formatter;
 
+use regex::{Captures, Regex};
+
 pub struct CompareResult<'a> {
     failed: Option<Vec<(&'a str, Option<&'a str>)>>,
 }
@@ -61,13 +63,33 @@ impl<'a> std::fmt::Display for CompareResult<'a> {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref RE: Regex = Regex::new(r"([-+]?[0-9]+)(\.([0-9]+))?").unwrap();
+}
+fn line_eq(text: &str, key: &str) -> bool {
+    // Round real numbers properly
+    let mut key_iter = RE.captures_iter(key);
+    let rounded = RE.replace_all(text, |captures: &Captures| -> String {
+        let mut in_text: String = captures.get(0).unwrap().as_str().to_string();
+        if let Some(in_key_captures) = &key_iter.next() {
+            if let Some(post) = in_key_captures.get(3) {
+                if let Ok(as_float) = in_text.parse::<f64>() {
+                    in_text = format!("{1:.0$}", post.as_str().len(), as_float);
+                }
+            }
+        }
+        in_text
+    });
+    return rounded.eq(key);
+}
+
 fn compare_lines(text: &'a str, key: &'a str) -> (&'a str, Option<&'a str>) {
     const TO_STRIP: &[char] = &['\n', ' ', '\t', '\r'];
     let pat = |c| TO_STRIP.contains(&c);
     let orig = text.trim_matches(pat).trim_matches(pat);
     let other = key.trim_matches(pat).trim_matches(pat);
 
-    if orig.eq(other) {
+    if line_eq(orig, other) {
         (orig, None)
     } else {
         (orig, Some(other))
