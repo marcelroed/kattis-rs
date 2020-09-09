@@ -1,6 +1,6 @@
 use colored::{ColoredString, Colorize};
 
-use itertools::Itertools;
+use itertools::{EitherOrBoth, Itertools};
 
 use std::fmt::Formatter;
 
@@ -102,7 +102,12 @@ pub fn compare(output: &'a str, key: &'a str) -> CompareResult<'a> {
 
     let comparisons: Vec<_> = output
         .into_iter()
-        .zip(key.into_iter())
+        .zip_longest(key.into_iter())
+        .map(|eob| match eob {
+            EitherOrBoth::Both(l, r) => (l, r),
+            EitherOrBoth::Left(l) => (l, ""),
+            EitherOrBoth::Right(r) => ("", r),
+        })
         .map(|(o, k)| compare_lines(o, k))
         .collect();
 
