@@ -136,11 +136,11 @@ pub fn compare(output: &'a str, key: &'a str) -> CompareResult<'a> {
             EitherOrBoth::Left(l) => (Some(l), None),
             EitherOrBoth::Right(r) => (None, Some(r)),
         })
-        .map(|out_key| match out_key {
-            (Some(o), Some(k)) => compare_lines(o, k),
-            (None, Some(k)) => LineStatus::Missing(k),
-            (Some(o), None) => LineStatus::Overpresent(o),
-            _ => unreachable!(),
+        .filter_map(|out_key| match out_key {
+            (Some(o), Some(k)) => Some(compare_lines(o, k)),
+            (None, Some(k)) if k != "" => Some(LineStatus::Missing(k)),
+            (Some(o), None) if o != "" => Some(LineStatus::Overpresent(o)),
+            _ => None,
         })
         .collect();
 

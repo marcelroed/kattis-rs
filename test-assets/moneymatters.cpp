@@ -55,8 +55,6 @@ int main(){
     nodeUnion(nodes[a], nodes[b]);
   }
 
-  cout << "BLAH\n\n\nBLUGH\nAHH\nBLAH\n";
-
   unordered_map<Node*, int> sums;
 
   for(int i = 0; i < n; i++) {
