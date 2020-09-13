@@ -16,39 +16,61 @@ use std::fmt::Formatter;
 use std::path::PathBuf;
 use std::process::{Output, Stdio};
 
-use crate::compare::compare;
+use crate::compare::{compare, CompareResult};
+use crate::submit::submit;
 use enum_iterator::IntoEnumIterator;
 use futures::executor::block_on;
 use itertools::any;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub async fn check_problems(problems: Vec<String>) {
-    join_all(
-        problems
-            .into_iter()
-            .map(|prob| spawn(async move { check_problem(&prob).await.unwrap() })),
-    )
-    .await;
+#[derive(Debug, Clone)]
+pub struct Problem {
+    pub problem_name: String,
+    pub submissions: Vec<Program>,
+    pub submit: bool,
 }
 
-struct Program {
+impl Problem {
+    pub fn new(problem_name: &str) -> Result<Self> {
+        Ok(Problem {
+            problem_name: problem_name.to_string(),
+            submissions: Program::from_problem_name(problem_name)?,
+            submit: false,
+        })
+    }
+    pub fn submit(mut self, submit: bool) -> Self {
+        self.submit = submit;
+        self
+    }
+}
+
+pub async fn check_problems(problems: Vec<Problem>) -> Vec<(Problem, Result<()>)> {
+    let handles = problems.into_iter().map(|mut prob| {
+        spawn(async move {
+            let checked = check_problem(&mut prob).await;
+            (prob, checked)
+        })
+    });
+
+    join_all(handles)
+        .await
+        .into_iter()
+        .map(|r| match r {
+            Ok(pr) => pr,
+            Err(e) => {
+                eprintln!("{}", e);
+                panic!();
+            }
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+pub struct Program {
     lang: Lang,
     source: PathBuf,
     binary: Option<PathBuf>,
-}
-
-struct RuntimeError(&'static str);
-
-impl fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Program failed during runtime {}", self.0)
-    }
-}
-
-impl fmt::Debug for RuntimeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Program failed during runtime")
-    }
+    compiled: Option<std::result::Result<(), String>>, // None if not compiled, Err if compile error
 }
 
 impl Drop for Program {
@@ -60,31 +82,54 @@ impl Drop for Program {
 }
 
 impl Program {
+    pub fn name(&self) -> String {
+        self.source
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+
+    pub fn from_problem_name(problem_name: &str) -> Result<Vec<Self>> {
+        Ok(find_source(problem_name)?
+            .into_iter()
+            .filter_map(|path| match Program::new(path.clone()) {
+                Ok(program) => Some(program),
+                Err(e) => {
+                    eprintln!(
+                        "Failed when reading {}: {}",
+                        path.file_name().unwrap().to_str().unwrap(),
+                        e
+                    );
+                    None
+                }
+            })
+            .collect())
+    }
+
     pub fn new(path: PathBuf) -> Result<Self> {
         Ok(Program {
-            lang: match path.extension() {
-                Some(ext) => match ext.to_str() {
-                    Some(x) => {
-                        let lang_opt = Lang::from_extension(x);
-                        match lang_opt {
-                            Some(l) => l,
-                            None => return Err("Filetype could not be read".into()),
-                        }
-                    }
-                    _ => {
-                        return Err("Filetype could not be read".into());
-                    }
-                },
-                _ => {
-                    return Err("Filetype not supported".into());
+            lang: {
+                if let Some(Some(Some(lang))) = path
+                    .extension()
+                    .map(|ext| ext.to_str().map(|x| Lang::from_extension(x)))
+                {
+                    lang
+                } else {
+                    return Err("Filetype could not be read.".into());
                 }
             },
             source: path,
             binary: None,
+            compiled: None,
         })
     }
 
-    pub async fn compile(&mut self) -> std::result::Result<(), String> {
+    pub async fn compile(&mut self) -> Result<()> {
+        if self.compiled.is_some() {
+            return Err("Already compiled!".into());
+        }
         match self.lang {
             Lang::Cpp => {
                 let mut output_path = std::env::temp_dir();
@@ -106,12 +151,13 @@ impl Program {
 
                 self.binary = Some(output_path.to_owned());
                 if output.status.success() {
+                    self.compiled = Some(Ok(()));
                     Ok(())
                 } else {
-                    let mut err =
-                        format!("{}\n", self.source.file_name().unwrap().to_str().unwrap());
+                    let mut err = format!("{}\n", self.name());
                     err.push_str(&String::from_utf8(output.stderr).unwrap());
-                    Err(err)
+                    self.compiled = Some(Err(err));
+                    Err("Compile Error!".into())
                 }
             }
             Lang::Rust => {
@@ -133,16 +179,19 @@ impl Program {
 
                 self.binary = Some(output_path.to_owned());
                 if output.status.success() {
+                    self.compiled = Some(Ok(()));
                     Ok(())
                 } else {
                     let mut err =
                         format!("{}\n", self.source.file_name().unwrap().to_str().unwrap());
                     err.push_str(&String::from_utf8_lossy(&output.stderr).into_owned());
-                    Err(err)
+                    self.compiled = Some(Err(err));
+                    Err("Compile Error!".into())
                 }
             }
             Lang::Python => {
                 self.binary = Some(self.source.clone());
+                self.compiled = Some(Ok(()));
                 Ok(())
             }
         }
@@ -195,9 +244,35 @@ impl Program {
         }
         Ok(tasks)
     }
+
+    pub async fn to_string(&self) -> Result<String> {
+        // Read from source
+        let mut output = String::new();
+        tokio::fs::File::open(&self.source)
+            .await?
+            .read_to_string(&mut output)
+            .await?;
+
+        Ok(output)
+    }
+
+    pub async fn submit(&self, problem_name: &str) -> Result<()> {
+        submit(
+            format!("{}", &self.lang),
+            problem_name.to_string(),
+            self.source
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
+            self.to_string().await.unwrap(),
+        )
+        .await
+    }
 }
 
-#[derive(IntoEnumIterator, PartialEq, Clone, Eq)]
+#[derive(IntoEnumIterator, PartialEq, Clone, Eq, Debug)]
 enum Lang {
     Cpp,
     Python,
@@ -228,6 +303,21 @@ impl Lang {
             "rs" => Some(Lang::Rust),
             _ => None,
         }
+    }
+}
+
+/// Used by submission system
+impl fmt::Display for Lang {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Lang::Cpp => "C++",
+                Lang::Python => "Python 3",
+                Lang::Rust => "Rust",
+            }
+        )
     }
 }
 
@@ -287,21 +377,66 @@ pub fn find_newest_source() -> Result<String> {
     }
 }
 
+struct ProblemInstance {
+    program: Program,
+    result: ProblemInstanceResult,
+}
+
+enum ProblemInstanceResult {
+    Ran(Vec<CaseRun>),
+    CompileError(String),
+}
+
+struct CaseRun {
+    case_name: String,
+    run_result: RunResult,
+}
+
+impl CaseRun {
+    pub fn passed(&self) -> bool {
+        match &self.run_result {
+            RunResult::Completed(cr) => cr.failed.is_none(),
+            _ => false,
+        }
+    }
+}
+
+pub enum RunResult {
+    Completed(CompareResult),
+    RuntimeError(String, String), // Output from stderr, stdout
+}
+
+// impl fmt::Display for RunResult {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+//         match self {
+//             RunResult::Completed(s) => {
+//                 write!(f, "{}", s)
+//             },
+//             RunResult::RuntimeError(stderr, stdout) => {
+//                 write!(f, "")
+//             },
+//             RunResult::CompileError(s) => {
+//                 write!(f, "{}", s)
+//             }
+//         }
+//     }
+// }
+
 /// Compiles, fetches, runs and compares problem
-async fn check_problem(problem_name: &str) -> Result<()> {
+async fn check_problem(problem: &mut Problem) -> Result<()> {
+    let should_submit = problem.submit;
     // Fetch problem IO
-    let future_io = fetch_problem(problem_name);
+    let future_io = fetch_problem(&problem.problem_name);
 
     // Find source paths
-    let source = find_source(problem_name)?;
-    if source.is_empty() {
-        println!("{}", problem_name.bright_white().bold());
+    if problem.submissions.is_empty() {
+        println!("{}", &problem.problem_name.bright_white().bold());
         println!(
             "{}",
             format!(
                 "{}{}{} ({}).\n",
                 "Found no source code for problem ",
-                problem_name.bold(),
+                &problem.problem_name.bold(),
                 ". Make sure that the file exists with one of the supported extensions\n".red(),
                 Lang::into_enum_iter()
                     .map(|e| e.extension())
@@ -313,99 +448,197 @@ async fn check_problem(problem_name: &str) -> Result<()> {
         return Ok(());
     }
 
-    // Create programs
-    let mut programs: Vec<Program> = source
-        .into_iter()
-        .map(|s| Program::new(s).unwrap())
-        .collect();
-
     // Compile programs and fetch io
-    let (compiled_programs, io) = join(
-        join_all(programs.iter_mut().map(|p| async move {
-            match p.compile().await {
-                Ok(()) => Ok(p),
-                Err(e) => Err(e),
-            }
-        })),
+    let (_, io) = join(
+        join_all(
+            problem
+                .submissions
+                .iter_mut()
+                .map(|p| async move { p.compile().await }),
+        ),
         future_io,
     )
     .await;
 
-    let compiled_programs = compiled_programs.into_iter().collect::<Vec<_>>();
+    // let compiled_programs = compiled_programs.into_iter().collect::<Vec<_>>();
 
     let io = &io?;
 
-    // Run
-    let run_results = join_all(compiled_programs.iter().map(
-        async move |program_result| -> std::result::Result<String, String> {
-            match program_result {
-                Ok(program) => {
-                    let mut result_stream = program.run_problems(io).unwrap();
-                    let mut to_print = format!(
-                        "{}\n",
-                        program.source.file_name().unwrap().to_str().unwrap()
-                    );
-                    while let Some((pio, out)) = result_stream.try_next().await.unwrap() {
-                        if out.status.success() {
-                            let output_string = from_utf8(out.stdout.as_slice()).unwrap();
-                            to_print.push_str(&format!(
-                                "{}\n{}\n\n",
-                                &pio.name.yellow().bold(),
-                                compare(&output_string.to_string(), &pio.output)
-                            ));
-                        } else {
-                            let runtime_error = from_utf8(out.stderr.as_slice()).unwrap();
-                            let output_before_crash = from_utf8(out.stdout.as_slice()).unwrap();
-                            to_print.push_str(&format!(
-                                "{}\n{}{}{}\n{}\n",
-                                &pio.name.yellow().bold(),
-                                "Runtime error in ".bright_red(),
-                                program
-                                    .source
-                                    .file_name()
-                                    .unwrap()
-                                    .to_str()
-                                    .unwrap()
-                                    .bold()
-                                    .bright_red(),
-                                ":".bright_red(),
-                                runtime_error
-                            ));
-                            if !output_before_crash.is_empty() {
-                                to_print.push_str(&format!(
-                                    "{}{}{}\n{}\n",
-                                    "Before crashing, ".bright_red(),
-                                    program
-                                        .source
-                                        .file_name()
-                                        .unwrap()
-                                        .to_str()
-                                        .unwrap()
-                                        .bold()
-                                        .bright_red(),
-                                    " outputted:".bright_red(),
-                                    output_before_crash
-                                ));
-                            } else {
-                                //to_print.push_str("Nothing printed before crash.");
-                            }
-                        }
+    let run_handles =
+        problem
+            .submissions
+            .clone()
+            .into_iter()
+            .map(async move |program| -> ProblemInstance {
+                let instance_results = match &program.compiled {
+                    Some(Err(compile_error)) => {
+                        ProblemInstanceResult::CompileError(compile_error.to_owned())
                     }
-                    Ok(to_print)
+                    Some(Ok(())) => {
+                        // Run program
+                        let mut result_stream = program.run_problems(io).unwrap();
+                        let mut results: Vec<CaseRun> = Vec::new();
+                        while let Some((pio, out)) = result_stream.try_next().await.unwrap() {
+                            results.push({
+                                let run_result = {
+                                    if out.status.success() {
+                                        let output_string =
+                                            from_utf8(out.stdout.as_slice()).unwrap().to_owned();
+                                        let compare_result = compare(&output_string, &pio.output);
+                                        RunResult::Completed(compare_result)
+                                    } else {
+                                        let runtime_error =
+                                            from_utf8(out.stderr.as_slice()).unwrap();
+                                        let output_before_crash =
+                                            from_utf8(out.stdout.as_slice()).unwrap();
+                                        RunResult::RuntimeError(
+                                            runtime_error.to_owned(),
+                                            output_before_crash.to_owned(),
+                                        )
+                                    }
+                                };
+                                CaseRun {
+                                    case_name: pio.name.to_owned(),
+                                    run_result,
+                                }
+                            });
+                        }
+                        ProblemInstanceResult::Ran(results)
+                    }
+                    None => panic!(),
+                };
+                ProblemInstance {
+                    program,
+                    result: instance_results,
                 }
-                Err(compile_error) => {
-                    let compile_error = compile_error.to_owned();
-                    Err(compile_error)
+            });
+
+    let run_results = join_all(run_handles).await;
+
+    println!("{}", &problem.problem_name.bold());
+    for pi in run_results {
+        let program_name = pi.program.name();
+        match pi.result {
+            ProblemInstanceResult::Ran(cases) => {
+                let mut failed_any = false;
+                let mut case_print = String::new();
+                for case in cases {
+                    if !case.passed() {
+                        failed_any = true;
+                    }
+                    let result_print = match case.run_result {
+                        RunResult::Completed(cr) => format!("{}\n", cr),
+                        RunResult::RuntimeError(stderr, stdout) => {
+                            let mut out = stderr.clone();
+                            if !stdout.is_empty() {
+                                out.push_str(&format!(
+                                    "\nBefore crashing, {} outputted {}",
+                                    program_name, stderr
+                                ));
+                            }
+                            out
+                        }
+                    };
+                    case_print.push_str(&format!("{}\n", &case.case_name.yellow().bold()));
+                    case_print.push_str(&result_print);
+                }
+                println!("{}\n{}", program_name, case_print);
+
+                if should_submit && !failed_any {
+                    if let Err(e) = pi.program.submit(&problem.problem_name).await {
+                        eprintln!("{}", e);
+                    }
                 }
             }
-        },
-    ))
-    .await;
-    println!("{}", problem_name.bold().bright_white());
-    run_results.into_iter().for_each(|r| match r {
-        Ok(comparison_result) => print!("{}", comparison_result),
-        Err(compile_error) => print!("{}", compile_error),
-    });
+            ProblemInstanceResult::CompileError(compile_error) => {
+                eprintln!("{}", compile_error);
+            }
+        }
+    }
+
+    // let run_results = join_all(compiled_programs.iter().map(
+    //     async move |program_result| -> std::result::Result<std::result::Result<String, String>, String> {
+    //         match program_result {
+    //             Ok(program) => {
+    //                 let mut result_stream = program.run_problems(io).unwrap();
+    //                 let mut to_print = format!(
+    //                     "{}\n",
+    //                     program.source.file_name().unwrap().to_str().unwrap()
+    //                 );
+    //                 while let Some((pio, out)) = result_stream.try_next().await.unwrap() {
+    //                     if out.status.success() {
+    //                         let output_string = from_utf8(out.stdout.as_slice()).unwrap();
+    //                         let comparison_result = compare(&output_string.to_string(), &pio.output);
+    //                         if comparison_result.failed.is_some() {
+    //                             passed_all = false;
+    //                         }
+    //                         to_print.push_str(&format!(
+    //                             "{}\n{}\n\n",
+    //                             &pio.name.yellow().bold(),
+    //                             compare(&output_string.to_string(), &pio.output)
+    //                         ));
+    //                     } else {
+    //                         let runtime_error = from_utf8(out.stderr.as_slice()).unwrap();
+    //                         let output_before_crash = from_utf8(out.stdout.as_slice()).unwrap();
+    //                         to_print.push_str(&format!(
+    //                             "{}\n{}{}{}\n{}\n",
+    //                             &pio.name.yellow().bold(),
+    //                             "Runtime error in ".bright_red(),
+    //                             program
+    //                                 .source
+    //                                 .file_name()
+    //                                 .unwrap()
+    //                                 .to_str()
+    //                                 .unwrap()
+    //                                 .bold()
+    //                                 .bright_red(),
+    //                             ":".bright_red(),
+    //                             runtime_error
+    //                         ));
+    //                         if !output_before_crash.is_empty() {
+    //                             to_print.push_str(&format!(
+    //                                 "{}{}{}\n{}\n",
+    //                                 "Before crashing, ".bright_red(),
+    //                                 program
+    //                                     .source
+    //                                     .file_name()
+    //                                     .unwrap()
+    //                                     .to_str()
+    //                                     .unwrap()
+    //                                     .bold()
+    //                                     .bright_red(),
+    //                                 " outputted:".bright_red(),
+    //                                 output_before_crash
+    //                             ));
+    //                         }
+    //                     }
+    //                 }
+    //                 Ok((passed_all, to_print))
+    //             }
+    //             Err(compile_error) => {
+    //                 let compile_error = compile_error.to_owned();
+    //                 Err(compile_error)
+    //             }
+    //         }
+    //     },
+    // ))
+    // .await;
+    // // Run and get results
+    // let run_results = join_all(run_handles).await;
+    // println!("{}", &problem.problem_name.bold().bright_white());
+    // run_results.iter().for_each(|r| match r {
+    //     Ok(comparison_result) => {
+    //         print!("{}", comparison_result.1);
+    //     }
+    //     Err(compile_error) => print!("{}", compile_error),
+    // });
+    //
+    // if problem.submit {
+    //     run_results.into_iter().for_each(|r| match r {
+    //         Ok((true, _)) => {}
+    //         _ => {}
+    //     })
+    // }
 
     Ok(())
 }

@@ -7,19 +7,19 @@ use std::fmt::Formatter;
 use regex::{Captures, Regex};
 
 #[derive(Debug, Clone)]
-pub enum LineStatus<'a> {
-    Wrong(&'a str, &'a str), // Wrong, correction
-    Correct(&'a str),        // Correct
-    Missing(&'a str),        // Missing
-    Overpresent(&'a str),    // Line past output
+pub enum LineStatus {
+    Wrong(String, String), // Wrong, correction
+    Correct(String),       // Correct
+    Missing(String),       // Missing
+    Overpresent(String),   // Line past output
 }
 
-pub struct CompareResult<'a> {
-    failed: Option<Vec<LineStatus<'a>>>,
+pub struct CompareResult {
+    pub failed: Option<Vec<LineStatus>>,
 }
 
-impl<'a> CompareResult<'a> {
-    pub fn new(x: Vec<LineStatus<'a>>) -> Self {
+impl CompareResult {
+    pub fn new(x: Vec<LineStatus>) -> Self {
         let failed = if (&x).iter().all(|x| matches!(x, LineStatus::Correct(_))) {
             None
         } else {
@@ -30,7 +30,7 @@ impl<'a> CompareResult<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for CompareResult<'a> {
+impl std::fmt::Display for CompareResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let output = match &self.failed {
             Some(failures) => {
@@ -58,12 +58,6 @@ impl<'a> std::fmt::Display for CompareResult<'a> {
                             correction.push(correct_line.white());
                         }
                         LineStatus::Missing(missing_line) => {
-                            // if !error_block_buf.0.is_empty() {
-                            //     correction.append(&mut error_block_buf.0);
-                            //     correction.append(&mut error_block_buf.1);
-                            // }
-                            // error_block_buf.0.clear();
-                            // error_block_buf.1.clear();
                             error_block_buf.0.push(" ".on_red());
                             error_block_buf.1.push(missing_line.green());
                         }
@@ -111,20 +105,20 @@ fn line_eq(text: &str, key: &str) -> bool {
     rounded.eq(key)
 }
 
-fn compare_lines(text: &'a str, key: &'a str) -> LineStatus<'a> {
+fn compare_lines(text: &str, key: &str) -> LineStatus {
     const TO_STRIP: &[char] = &['\n', ' ', '\t', '\r'];
     let pat = |c| TO_STRIP.contains(&c);
     let orig = text.trim_matches(pat).trim_matches(pat);
     let other = key.trim_matches(pat).trim_matches(pat);
 
     if line_eq(orig, other) {
-        LineStatus::Correct(orig)
+        LineStatus::Correct(orig.to_string())
     } else {
-        LineStatus::Wrong(orig, other)
+        LineStatus::Wrong(orig.to_string(), other.to_string())
     }
 }
 
-pub fn compare(output: &'a str, key: &'a str) -> CompareResult<'a> {
+pub fn compare(output: &str, key: &str) -> CompareResult {
     let output: Vec<&str> = output.split('\n').collect();
     let key: Vec<&str> = key.split('\n').collect();
 
@@ -138,8 +132,8 @@ pub fn compare(output: &'a str, key: &'a str) -> CompareResult<'a> {
         })
         .filter_map(|out_key| match out_key {
             (Some(o), Some(k)) => Some(compare_lines(o, k)),
-            (None, Some(k)) if k != "" => Some(LineStatus::Missing(k)),
-            (Some(o), None) if o != "" => Some(LineStatus::Overpresent(o)),
+            (None, Some(k)) if k != "" => Some(LineStatus::Missing(k.to_string())),
+            (Some(o), None) if o != "" => Some(LineStatus::Overpresent(o.to_string())),
             _ => None,
         })
         .collect();
