@@ -63,8 +63,9 @@ async fn get_config() -> Result<KattisConfig> {
         Err(format!(
             "\
 Failed to read in a config file from your home directory.
-Please go to https://open.kattis.com/download/kattisrc to
-download your personal config file, and place it in your home
+In order to submit code from the CLI, you need to be authenticated.
+Please go to https://open.kattis.com/download/kattisrc to download 
+your personal config file, and place it in your home 
 folder ({}) as .kattisrc
 
 The file should look something like this:
