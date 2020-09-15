@@ -11,6 +11,7 @@ use colored::Colorize;
 use futures::prelude::stream::*;
 use futures::stream::TryStreamExt;
 
+use regex::Regex;
 use std::fmt;
 use std::fmt::Formatter;
 use std::path::PathBuf;
@@ -422,6 +423,10 @@ pub enum RunResult {
 //     }
 // }
 
+lazy_static::lazy_static! {
+    static ref SEGFAULT_RE: Regex = Regex::new(r"signal: (\d+)").unwrap();
+}
+
 /// Compiles, fetches, runs and compares problem
 async fn check_problem(problem: &mut Problem) -> Result<()> {
     let should_submit = problem.submit;
@@ -481,18 +486,29 @@ async fn check_problem(problem: &mut Problem) -> Result<()> {
                         while let Some((pio, out)) = result_stream.try_next().await.unwrap() {
                             results.push({
                                 let run_result = {
-                                    if out.status.success() {
+                                    let segfaulted = {
+                                        let status = out.status.to_string();
+                                        let seg_opt = SEGFAULT_RE
+                                            .captures(&status)
+                                            .and_then(|cap| cap.get(1).map(|m| m.as_str() == "11"));
+                                        matches!(seg_opt, Some(true))
+                                    };
+                                    if out.status.success() && !segfaulted {
                                         let output_string =
                                             from_utf8(out.stdout.as_slice()).unwrap().to_owned();
                                         let compare_result = compare(&output_string, &pio.output);
                                         RunResult::Completed(compare_result)
                                     } else {
-                                        let runtime_error =
-                                            from_utf8(out.stderr.as_slice()).unwrap();
+                                        let runtime_error = if segfaulted {
+                                            "Segmentation fault\n".red().to_string()
+                                        } else {
+                                            from_utf8(out.stderr.as_slice()).unwrap().to_string()
+                                        };
+
                                         let output_before_crash =
                                             from_utf8(out.stdout.as_slice()).unwrap();
                                         RunResult::RuntimeError(
-                                            runtime_error.to_owned(),
+                                            runtime_error,
                                             output_before_crash.to_owned(),
                                         )
                                     }
