@@ -407,22 +407,6 @@ pub enum RunResult {
     RuntimeError(String, String), // Output from stderr, stdout
 }
 
-// impl fmt::Display for RunResult {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-//         match self {
-//             RunResult::Completed(s) => {
-//                 write!(f, "{}", s)
-//             },
-//             RunResult::RuntimeError(stderr, stdout) => {
-//                 write!(f, "")
-//             },
-//             RunResult::CompileError(s) => {
-//                 write!(f, "{}", s)
-//             }
-//         }
-//     }
-// }
-
 lazy_static::lazy_static! {
     static ref SEGFAULT_RE: Regex = Regex::new(r"signal: (\d+)").unwrap();
 }

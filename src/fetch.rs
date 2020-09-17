@@ -3,7 +3,6 @@ use std::collections::HashMap;
 
 use futures::io::SeekFrom;
 use itertools::Itertools;
-use std::cmp::Ordering;
 use std::env::temp_dir;
 use std::io::Read;
 use tokio::fs::{File, OpenOptions};
@@ -114,7 +113,7 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
         .map(|(name, io)| ProblemIO::new(name, io))
         .sorted_by_key(|rpio| match rpio {
             Ok(pio) => pio.name.clone(),
-            Err(e) => "zzzzz".to_string(),
+            _ => "zzzzz".to_string(),
         })
         .collect::<Result<Vec<_>>>()
 }
