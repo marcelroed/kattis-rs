@@ -58,6 +58,7 @@ pub async fn main() -> io::Result<()> {
                 .long("force")
         );
     let matches = app.get_matches_mut();
+    let force = matches.is_present("force");
 
     // println!(
     //     "{:?} {:?} {}",
@@ -123,7 +124,7 @@ pub async fn main() -> io::Result<()> {
         })
         .collect();
 
-    let _problem_results = checker::check_problems(problems).await;
+    let _problem_results = checker::check_problems(problems, force).await;
     Ok(())
 }
 

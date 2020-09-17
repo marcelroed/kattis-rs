@@ -45,10 +45,10 @@ impl Problem {
     }
 }
 
-pub async fn check_problems(problems: Vec<Problem>) -> Vec<(Problem, Result<()>)> {
+pub async fn check_problems(problems: Vec<Problem>, force: bool) -> Vec<(Problem, Result<()>)> {
     let handles = problems.into_iter().map(|mut prob| {
         spawn(async move {
-            let checked = check_problem(&mut prob).await;
+            let checked = check_problem(&mut prob, force).await;
             (prob, checked)
         })
     });
@@ -428,7 +428,7 @@ lazy_static::lazy_static! {
 }
 
 /// Compiles, fetches, runs and compares problem
-async fn check_problem(problem: &mut Problem) -> Result<()> {
+async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
     let should_submit = problem.submit;
     // Fetch problem IO
     let future_io = fetch_problem(&problem.problem_name);
@@ -560,7 +560,7 @@ async fn check_problem(problem: &mut Problem) -> Result<()> {
                 }
                 println!("{}\n{}", program_name, case_print);
 
-                if should_submit && !failed_any {
+                if should_submit && (!failed_any || force) {
                     if let Err(e) = pi.program.submit(&problem.problem_name).await {
                         eprintln!("{}", e);
                     }
@@ -571,90 +571,6 @@ async fn check_problem(problem: &mut Problem) -> Result<()> {
             }
         }
     }
-
-    // let run_results = join_all(compiled_programs.iter().map(
-    //     async move |program_result| -> std::result::Result<std::result::Result<String, String>, String> {
-    //         match program_result {
-    //             Ok(program) => {
-    //                 let mut result_stream = program.run_problems(io).unwrap();
-    //                 let mut to_print = format!(
-    //                     "{}\n",
-    //                     program.source.file_name().unwrap().to_str().unwrap()
-    //                 );
-    //                 while let Some((pio, out)) = result_stream.try_next().await.unwrap() {
-    //                     if out.status.success() {
-    //                         let output_string = from_utf8(out.stdout.as_slice()).unwrap();
-    //                         let comparison_result = compare(&output_string.to_string(), &pio.output);
-    //                         if comparison_result.failed.is_some() {
-    //                             passed_all = false;
-    //                         }
-    //                         to_print.push_str(&format!(
-    //                             "{}\n{}\n\n",
-    //                             &pio.name.yellow().bold(),
-    //                             compare(&output_string.to_string(), &pio.output)
-    //                         ));
-    //                     } else {
-    //                         let runtime_error = from_utf8(out.stderr.as_slice()).unwrap();
-    //                         let output_before_crash = from_utf8(out.stdout.as_slice()).unwrap();
-    //                         to_print.push_str(&format!(
-    //                             "{}\n{}{}{}\n{}\n",
-    //                             &pio.name.yellow().bold(),
-    //                             "Runtime error in ".bright_red(),
-    //                             program
-    //                                 .source
-    //                                 .file_name()
-    //                                 .unwrap()
-    //                                 .to_str()
-    //                                 .unwrap()
-    //                                 .bold()
-    //                                 .bright_red(),
-    //                             ":".bright_red(),
-    //                             runtime_error
-    //                         ));
-    //                         if !output_before_crash.is_empty() {
-    //                             to_print.push_str(&format!(
-    //                                 "{}{}{}\n{}\n",
-    //                                 "Before crashing, ".bright_red(),
-    //                                 program
-    //                                     .source
-    //                                     .file_name()
-    //                                     .unwrap()
-    //                                     .to_str()
-    //                                     .unwrap()
-    //                                     .bold()
-    //                                     .bright_red(),
-    //                                 " outputted:".bright_red(),
-    //                                 output_before_crash
-    //                             ));
-    //                         }
-    //                     }
-    //                 }
-    //                 Ok((passed_all, to_print))
-    //             }
-    //             Err(compile_error) => {
-    //                 let compile_error = compile_error.to_owned();
-    //                 Err(compile_error)
-    //             }
-    //         }
-    //     },
-    // ))
-    // .await;
-    // // Run and get results
-    // let run_results = join_all(run_handles).await;
-    // println!("{}", &problem.problem_name.bold().bright_white());
-    // run_results.iter().for_each(|r| match r {
-    //     Ok(comparison_result) => {
-    //         print!("{}", comparison_result.1);
-    //     }
-    //     Err(compile_error) => print!("{}", compile_error),
-    // });
-    //
-    // if problem.submit {
-    //     run_results.into_iter().for_each(|r| match r {
-    //         Ok((true, _)) => {}
-    //         _ => {}
-    //     })
-    // }
 
     Ok(())
 }
