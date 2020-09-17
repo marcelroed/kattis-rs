@@ -549,7 +549,7 @@ async fn check_problem(problem: &mut Problem) -> Result<()> {
                             if !stdout.is_empty() {
                                 out.push_str(&format!(
                                     "\nBefore crashing, {} outputted {}",
-                                    program_name, stderr
+                                    program_name, stdout
                                 ));
                             }
                             out
