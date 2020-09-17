@@ -238,7 +238,7 @@ impl Program {
         &'a self,
         ios: &'a [ProblemIO],
     ) -> Result<impl Stream<Item = Result<(&ProblemIO, Output)>> + 'a> {
-        let tasks = FuturesUnordered::new();
+        let mut tasks = FuturesOrdered::new();
         for (_i, pio) in ios.iter().enumerate() {
             let task = self.run_problem(pio);
             tasks.push(task);
@@ -548,7 +548,7 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
                             let mut out = stderr.clone();
                             if !stdout.is_empty() {
                                 out.push_str(&format!(
-                                    "\nBefore crashing, {} outputted {}",
+                                    "\nBefore crashing, {} outputted:\n{}",
                                     program_name, stdout
                                 ));
                             }
