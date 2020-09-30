@@ -30,7 +30,7 @@ pub async fn main() -> io::Result<()> {
         .author("Marcel Rød")
         .about("Tests Kattis competitive programming problems.")
         .arg(
-            Arg::with_name("problems")
+            Arg::new("problems")
                 .about(
                     "Names of the problems to test.\
                     The format needs to be {problem} in open.kattis.com/problems/{problem}. \
@@ -42,7 +42,7 @@ pub async fn main() -> io::Result<()> {
                 .multiple(true)
                 .value_name("PROBLEM"))
         .arg(
-            Arg::with_name("submit")
+            Arg::new("submit")
                 .about("Problems after this flag are submitted if successful.\
                            If no problems are listed, use problems from regular args.")
                 .multiple_values(true)
@@ -52,7 +52,7 @@ pub async fn main() -> io::Result<()> {
                 .long("submit")
                 .value_name("SUBMIT_PROBLEM"))
         .arg(
-            Arg::with_name("force")
+            Arg::new("force")
                 .about("Force submission even if submitted problems don't pass local tests.")
                 .short('f')
                 .long("force")

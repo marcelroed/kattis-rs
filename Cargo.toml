@@ -1,6 +1,6 @@
 [package]
 name = "kattis-rs"
-version = "1.2.3"
+version = "1.2.4"
 authors = ["Marcel H Rød <marcelroed@gmail.com>"]
 edition = "2018"
 homepage = "https://github.com/marcelroed/"
@@ -19,7 +19,7 @@ path = "src/main.rs"
 reqwest = {version = "0.10.4", features = ["blocking", "json", "cookies"]}
 tempfile = "3.1"
 zip = "0.5"
-clap = { version = "3.0.0-beta.1", features = ["suggestions", "color"] }
+clap = { version = "3.0.0-beta.2", features = ["suggestions", "color"] }
 futures = "0.3"
 tokio = { version = "0.2", features = ["full"] }
 walkdir = "2.3"
