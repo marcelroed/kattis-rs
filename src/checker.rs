@@ -176,7 +176,9 @@ impl Program {
                     .arg("--color=always")
                     .output()
                     .await
-                    .expect("Couldn't compile Rust program. Make sure rustc is installed and in path (this is the compiler that kattis uses).");
+                    .expect(
+                        "Couldn't compile Rust program. Make sure rustc is installed and in path.",
+                    );
 
                 self.binary = Some(output_path.to_owned());
                 if output.status.success() {

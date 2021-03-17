@@ -37,8 +37,8 @@ impl ProblemIO {
 
 fn remove_suffix(s: &str, p: Vec<&str>) -> String {
     for pat in p {
-        if s.ends_with(pat) {
-            return s[..(s.len() - pat.len())].into();
+        if let Some(stripped) = s.strip_suffix(pat) {
+            return stripped.into();
         }
     }
     s.into()

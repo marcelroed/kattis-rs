@@ -60,21 +60,6 @@ pub async fn main() -> io::Result<()> {
     let matches = app.get_matches_mut();
     let force = matches.is_present("force");
 
-    // println!(
-    //     "{:?} {:?} {}",
-    //     matches
-    //         .values_of("problems")
-    //         .unwrap()
-    //         .map(String::from)
-    //         .collect::<Vec<_>>(),
-    //     matches
-    //         .values_of("submit")
-    //         .unwrap()
-    //         .map(String::from)
-    //         .collect::<Vec<_>>(),
-    //     matches.is_present("force")
-    // );
-
     let problem_names: Vec<_> = {
         let mut problems = match matches.values_of_lossy("problems") {
             Some(problems) => problems,
