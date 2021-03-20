@@ -73,7 +73,13 @@ pub async fn main() -> io::Result<()> {
             match checker::find_newest_source() {
                 Ok(pname) => vec![pname],
                 Err(e) => {
-                    eprintln!("Although kattis can be used without arguments, this requires the latest edited file in this directory to be a kattis file.\nEncountered error: {}\nPerhaps you wanted the regular usage?", e.to_string());
+                    eprintln!(
+                        "Although kattis can be used without arguments, \
+                        this requires the latest edited file in this directory to be a kattis file.\
+                        \nEncountered error: {}\n\
+                        Perhaps you wanted the regular usage?",
+                        e.to_string()
+                    );
                     eprintln!("{}", app.generate_usage());
                     std::process::exit(2);
                 }
