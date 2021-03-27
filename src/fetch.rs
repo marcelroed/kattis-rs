@@ -4,25 +4,27 @@ use std::collections::HashMap;
 use futures::io::SeekFrom;
 use itertools::Itertools;
 use std::env::temp_dir;
+use std::fs;
 use std::io::Read;
+use tempfile::TempPath;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ErrorKind};
 
 pub fn initialize_temp_dir() -> Result<()> {
     let mut tmp_dir = std::env::temp_dir();
     tmp_dir.push("kattis/problem_files/");
-    std::fs::create_dir_all(tmp_dir).map_err(|e| e.into())
+    fs::create_dir_all(tmp_dir).map_err(|e| e.into())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProblemIO {
     pub name: String,
-    pub input: String,
-    pub output: String,
+    pub input: TempPath,
+    pub output: TempPath,
 }
 
 impl ProblemIO {
-    pub fn new(name: String, t: (Option<String>, Option<String>)) -> Result<Self> {
+    pub fn new(name: String, t: (Option<TempPath>, Option<TempPath>)) -> Result<Self> {
         if let (Some(input), Some(output)) = t {
             Ok(ProblemIO {
                 name,
@@ -32,6 +34,13 @@ impl ProblemIO {
         } else {
             Err("Kattis zip missing input or output".into())
         }
+    }
+
+    pub fn get_output_string(&self) -> Result<String> {
+        let mut res = String::new();
+        let mut output_file = fs::File::open(&self.output)?;
+        output_file.read_to_string(&mut res)?;
+        Ok(res)
     }
 }
 
@@ -90,19 +99,18 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
     let mut io_map = HashMap::new();
 
     for file_name in file_names {
-        let mut s = String::new();
-        zip.by_name(&file_name)
-            .unwrap()
-            .read_to_string(&mut s)
-            .unwrap();
+        let mut out_file = tempfile::NamedTempFile::new()?;
+        let mut zipped_file_reader = zip.by_name(&file_name).unwrap();
+        std::io::copy(&mut zipped_file_reader, &mut out_file)?;
+        let file_path = out_file.into_temp_path();
         let (ref mut i, ref mut o) = *io_map
             .entry(remove_suffix(&file_name, vec![".in", ".ans"]).clone())
             .or_insert((None, None));
 
         if file_name.ends_with(".in") {
-            *i = Some(s);
+            *i = Some(file_path);
         } else if file_name.ends_with(".ans") {
-            *o = Some(s);
+            *o = Some(file_path);
         } else {
             return Err("Incompatible input format".into());
         }

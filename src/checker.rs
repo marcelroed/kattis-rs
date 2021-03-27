@@ -22,7 +22,7 @@ use crate::submit::submit;
 use enum_iterator::IntoEnumIterator;
 use futures::executor::block_on;
 use itertools::any;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 
 #[derive(Debug, Clone)]
 pub struct Problem {
@@ -200,17 +200,17 @@ impl Program {
         }
     }
 
-    fn spawn_process(&self) -> Result<Child> {
+    fn spawn_process(&self, stdin_file: std::fs::File) -> Result<Child> {
         if let Some(bin) = &self.binary {
             match self.lang {
                 Lang::Cpp | Lang::Rust => Ok(Command::new(bin)
-                    .stdin(Stdio::piped())
+                    .stdin(Stdio::from(stdin_file))
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn()?),
                 Lang::Python => Ok(Command::new("python")
                     .arg(bin)
-                    .stdin(Stdio::piped())
+                    .stdin(Stdio::from(stdin_file))
                     .stderr(Stdio::piped())
                     .stdout(Stdio::piped())
                     .spawn()?),
@@ -221,16 +221,10 @@ impl Program {
     }
 
     async fn run_problem(&'a self, pio: &'a ProblemIO) -> Result<(&'a ProblemIO, Output)> {
-        match self.spawn_process() {
-            Ok(mut child) => {
-                child
-                    .stdin
-                    .as_mut()
-                    .unwrap()
-                    .write(pio.input.as_bytes())
-                    .await?;
+        match self.spawn_process(std::fs::File::open(&pio.input)?) {
+            Ok(child) => {
                 let results = child.wait_with_output().await.unwrap();
-                Ok((&pio, results))
+                Ok((pio, results))
             }
             Err(e) => Err(e),
         }
@@ -482,7 +476,10 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
                                     if out.status.success() && !segfaulted {
                                         let output_string =
                                             from_utf8(out.stdout.as_slice()).unwrap().to_owned();
-                                        let compare_result = compare(&output_string, &pio.output);
+                                        let pio_output_string: String =
+                                            pio.get_output_string().unwrap();
+                                        let compare_result =
+                                            compare(&output_string, &pio_output_string);
                                         RunResult::Completed(compare_result)
                                     } else {
                                         let runtime_error = if segfaulted {
