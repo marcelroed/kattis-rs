@@ -176,7 +176,9 @@ impl Program {
                     .arg("--color=always")
                     .output()
                     .await
-                    .expect("Couldn't compile Rust program. Make sure rustc is installed and in path (this is the compiler that kattis uses).");
+                    .expect(
+                        "Couldn't compile Rust program. Make sure rustc is installed and in path.",
+                    );
 
                 self.binary = Some(output_path.to_owned());
                 if output.status.success() {
@@ -406,22 +408,6 @@ pub enum RunResult {
     Completed(CompareResult),
     RuntimeError(String, String), // Output from stderr, stdout
 }
-
-// impl fmt::Display for RunResult {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-//         match self {
-//             RunResult::Completed(s) => {
-//                 write!(f, "{}", s)
-//             },
-//             RunResult::RuntimeError(stderr, stdout) => {
-//                 write!(f, "")
-//             },
-//             RunResult::CompileError(s) => {
-//                 write!(f, "{}", s)
-//             }
-//         }
-//     }
-// }
 
 lazy_static::lazy_static! {
     static ref SEGFAULT_RE: Regex = Regex::new(r"signal: (\d+)").unwrap();

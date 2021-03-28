@@ -132,8 +132,8 @@ pub fn compare(output: &str, key: &str) -> CompareResult {
         })
         .filter_map(|out_key| match out_key {
             (Some(o), Some(k)) => Some(compare_lines(o, k)),
-            (None, Some(k)) if k != "" => Some(LineStatus::Missing(k.to_string())),
-            (Some(o), None) if o != "" => Some(LineStatus::Overpresent(o.to_string())),
+            (None, Some(k)) if !k.is_empty() => Some(LineStatus::Missing(k.to_string())),
+            (Some(o), None) if !o.is_empty() => Some(LineStatus::Overpresent(o.to_string())),
             _ => None,
         })
         .collect();

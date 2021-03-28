@@ -37,8 +37,8 @@ impl ProblemIO {
 
 fn remove_suffix(s: &str, p: Vec<&str>) -> String {
     for pat in p {
-        if s.ends_with(pat) {
-            return s[..(s.len() - pat.len())].into();
+        if let Some(stripped) = s.strip_suffix(pat) {
+            return stripped.into();
         }
     }
     s.into()
@@ -113,7 +113,7 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
         .map(|(name, io)| ProblemIO::new(name, io))
         .sorted_by_key(|rpio| match rpio {
             Ok(pio) => pio.name.clone(),
-            Err(e) => e.to_string(),
+            _ => "zzzzz".to_string(),
         })
         .collect::<Result<Vec<_>>>()
 }

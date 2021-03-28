@@ -60,21 +60,6 @@ pub async fn main() -> io::Result<()> {
     let matches = app.get_matches_mut();
     let force = matches.is_present("force");
 
-    // println!(
-    //     "{:?} {:?} {}",
-    //     matches
-    //         .values_of("problems")
-    //         .unwrap()
-    //         .map(String::from)
-    //         .collect::<Vec<_>>(),
-    //     matches
-    //         .values_of("submit")
-    //         .unwrap()
-    //         .map(String::from)
-    //         .collect::<Vec<_>>(),
-    //     matches.is_present("force")
-    // );
-
     let problem_names: Vec<_> = {
         let mut problems = match matches.values_of_lossy("problems") {
             Some(problems) => problems,
@@ -88,7 +73,13 @@ pub async fn main() -> io::Result<()> {
             match checker::find_newest_source() {
                 Ok(pname) => vec![pname],
                 Err(e) => {
-                    eprintln!("Although kattis can be used without arguments, this requires the latest edited file in this directory to be a kattis file.\nEncountered error: {}\nPerhaps you wanted the regular usage?", e.to_string());
+                    eprintln!(
+                        "Although kattis can be used without arguments, \
+                        this requires the latest edited file in this directory to be a kattis file.\
+                        \nEncountered error: {}\n\
+                        Perhaps you wanted the regular usage?",
+                        e.to_string()
+                    );
                     eprintln!("{}", app.generate_usage());
                     std::process::exit(2);
                 }
