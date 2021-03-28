@@ -133,9 +133,10 @@ pub async fn problem_exists(problem_name: &str) -> Result<bool> {
         .max_depth(1)
         .into_iter()
         .map(|f| {
-            let de = f.unwrap();
-            let s = de.file_name().to_str().unwrap();
-            s[..s.len() - 3].to_owned()
+            // Strip the .zip off
+            let pb = f.unwrap().into_path();
+            let s = pb.file_stem().unwrap().to_str().unwrap();
+            s.to_string()
         })
         .collect();
 
