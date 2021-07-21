@@ -1,3 +1,4 @@
+// Has a runtime error (segfault)
 #include <vector>
 #include <iostream>
 
@@ -22,6 +23,7 @@ int main(){
   for(int i = 0; i < N; i++){
       int l, n;
       vector<int> ants;
+      cout << ants[0];
       cin >> l >> n;
       for (int j = 0; j < n; j++){
         int pos;
