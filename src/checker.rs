@@ -114,7 +114,7 @@ impl Program {
             lang: {
                 if let Some(Some(Some(lang))) = path
                     .extension()
-                    .map(|ext| ext.to_str().map(|x| Lang::from_extension(x)))
+                    .map(|ext| ext.to_str().map(Lang::from_extension))
                 {
                     lang
                 } else {
@@ -325,7 +325,7 @@ pub fn find_source(problem_name: &str) -> Result<Vec<PathBuf>> {
         .filter_map(|f| {
             if let Ok(de) = f {
                 if let Some(s) = de.file_name().to_str() {
-                    let ends_with_extension = |l: Lang| s.ends_with(&format!(".{}", l.extension()));
+                    let ends_with_extension = |l: Lang| { s.ends_with(&format!(".{}", l.extension())) };
                     if s.starts_with(&format!("{}.", problem_name))
                         && any(Lang::into_enum_iter(), ends_with_extension)
                     {
@@ -346,7 +346,7 @@ pub fn find_newest_source() -> Result<String> {
         .filter_map(|f| {
             if let Ok(de) = f {
                 if let Some(s) = de.file_name().to_str() {
-                    let ends_with_extension = |l: Lang| s.ends_with(&format!(".{}", l.extension()));
+                    let ends_with_extension = |l: Lang| { s.ends_with(&format!(".{}", l.extension())) };
                     if any(Lang::into_enum_iter(), ends_with_extension) {
                         return Some(de);
                     }

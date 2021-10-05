@@ -1,6 +1,6 @@
 #![feature(in_band_lifetimes)]
 #![feature(async_closure)]
-#![feature(try_trait)]
+// #![feature(try_trait)]
 
 use clap::{App, Arg};
 
@@ -123,6 +123,6 @@ pub async fn main() -> io::Result<()> {
 mod tests {
     #[test]
     fn it_works() {
-        assert_eq!(2 + 2, 4);
+        assert_eq!("2".parse::<usize>().unwrap() + 2, 4);
     }
 }

@@ -119,12 +119,11 @@ fn compare_lines(text: &str, key: &str) -> LineStatus {
 }
 
 pub fn compare(output: &str, key: &str) -> CompareResult {
-    let output: Vec<&str> = output.split('\n').collect();
-    let key: Vec<&str> = key.split('\n').collect();
+    
+    
 
-    let comparisons: Vec<_> = output
-        .into_iter()
-        .zip_longest(key.into_iter())
+    let comparisons: Vec<_> = output.split('\n')
+        .zip_longest(key.split('\n'))
         .map(|eob| match eob {
             EitherOrBoth::Both(l, r) => (Some(l), Some(r)),
             EitherOrBoth::Left(l) => (Some(l), None),
@@ -147,8 +146,8 @@ mod test {
 
     #[test]
     fn test_compare() {
-        let output = "This is my long story about going to taco bell.\nOne day I felt like I really wanted some good stuff.\nI walked to taco bell to get some 0.55512312412345 tacos.".to_string();
-        let key = "This is my long story about going to cracko bell.\nOne day I felt like I really wanted some good stuff.\nI walked to cracko bell to get some 0.5551231241234 crack.".to_string();
+        let output = "This is my long story about going to taco bell.\nOne day I felt like I really wanted some good stuff.\nI walked to taco bell to get 0.55512312412345 tacos.".to_string();
+        let key = "This is my long story about going to cracko bell.\nOne day I felt like I really wanted some good stuff.\nI walked to cracko bell to get 0.5551231241234 crack.".to_string();
         let comparisons = compare(&output, &key);
         println!("{}", comparisons);
     }

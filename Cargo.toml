@@ -2,7 +2,7 @@
 name = "kattis-rs"
 version = "1.2.5"
 authors = ["Marcel H Rød <marcelroed@gmail.com>"]
-edition = "2018"
+edition = "2021"
 homepage = "https://github.com/marcelroed/"
 repository = "https://github.com/marcelroed/kattis-rs"
 description = "Competitive programming checker for open.kattis.com"
@@ -21,7 +21,7 @@ tempfile = "3.1"
 zip = "0.5"
 clap = { version = "3.0.0-beta.2", features = ["suggestions", "color"] }
 futures = "0.3"
-tokio = { version = "0.2", features = ["full"] }
+tokio = { version = "1.9", features = ["full"] }
 walkdir = "2.3"
 colored = "2.0"
 itertools = "0.9"

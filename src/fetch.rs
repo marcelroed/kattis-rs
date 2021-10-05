@@ -8,7 +8,7 @@ use std::fs;
 use std::io::Read;
 use tempfile::TempPath;
 use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, ErrorKind};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ErrorKind, AsyncSeekExt};
 
 pub fn initialize_temp_dir() -> Result<()> {
     let mut tmp_dir = std::env::temp_dir();
@@ -82,6 +82,7 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
 
                 file.write_all(&*tmp).await?;
                 file.seek(SeekFrom::Start(0)).await?;
+                // file.start_seek(SeekFrom::Start(0)).await?;
                 file
             }
             _ => return Err(e.into()),
