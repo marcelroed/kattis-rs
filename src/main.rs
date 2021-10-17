@@ -39,7 +39,7 @@ pub async fn main() -> io::Result<()> {
                 )
                 .required(false)
                 .min_values(0)
-                .multiple(true)
+                .multiple_occurrences(true)
                 .value_name("PROBLEM"))
         .arg(
             Arg::new("submit")
