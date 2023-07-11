@@ -26,7 +26,7 @@ pub struct ProblemIO {
 impl ProblemIO {
     pub fn new(name: String, t: (Option<TempPath>, Option<TempPath>)) -> Result<Self> {
         if let (Some(input), Some(output)) = t {
-            Ok(ProblemIO {
+            Ok(Self {
                 name,
                 input,
                 output,
@@ -80,7 +80,7 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
                 .bytes()
                 .await?;
 
-                file.write_all(&*tmp).await?;
+                file.write_all(&tmp).await?;
                 file.seek(SeekFrom::Start(0)).await?;
                 // file.start_seek(SeekFrom::Start(0)).await?;
                 file

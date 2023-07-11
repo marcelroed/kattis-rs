@@ -23,7 +23,9 @@ int main(){
   for(int i = 0; i < N; i++){
       int l, n;
       vector<int> ants;
-      cout << ants[0];
+
+      // Meant to segfault
+      cout << ants[1000];
       cin >> l >> n;
       for (int j = 0; j < n; j++){
         int pos;

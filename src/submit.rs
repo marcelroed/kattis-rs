@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::Result;
 use colored::Colorize;
 use regex::Regex;
@@ -15,6 +16,27 @@ struct KattisConfig {
     login_url: String,
     submit_url: String,
     submissions_url: String,
+}
+
+impl KattisConfig{
+    pub fn from_config(config: &HashMap<String, HashMap<String, Option<String>>>) -> Result<Self>{
+        let read_setting = |first, second| -> Option<String> {
+            let res = config.get(first)?.get(second)?;
+            Some(res.as_ref()?.clone())
+        };
+
+        let read_setting_with_error = |first, second| -> Result<String>{
+            read_setting(first, second).ok_or_else(|| format!("Failed to read {}.{} from .kattisrc", first, second).into())
+        };
+
+        Ok(Self {
+            username: read_setting_with_error("user", "username")?,
+            token: read_setting_with_error("user", "token")?,
+            login_url: read_setting_with_error("kattis", "loginurl")?,
+            submit_url: read_setting_with_error("kattis", "submissionurl")?,
+            submissions_url: read_setting_with_error("kattis", "submissionsurl")?,
+        })
+    }
 }
 
 lazy_static::lazy_static! {
@@ -36,28 +58,7 @@ async fn get_config() -> Result<KattisConfig> {
         config_file.read_to_string(&mut config_string).await?;
         config_string = config_string.replace(": ", "=");
         let config = configparser::ini::Ini::new().read(config_string)?;
-        Ok(KattisConfig {
-            username: config["user"]["username"]
-                .as_ref()
-                .expect("Failed to read .kattisrc")
-                .to_owned(),
-            token: config["user"]["token"]
-                .as_ref()
-                .expect("Failed to read .kattisrc")
-                .to_owned(),
-            login_url: config["kattis"]["loginurl"]
-                .as_ref()
-                .expect("Failed to read .kattisrc")
-                .to_owned(),
-            submit_url: config["kattis"]["submissionurl"]
-                .as_ref()
-                .expect("Failed to read .kattisrc")
-                .to_owned(),
-            submissions_url: config["kattis"]["submissionsurl"]
-                .as_ref()
-                .expect("Failed to read .kattisrc")
-                .to_owned(),
-        })
+        KattisConfig::from_config(&config)
     } else {
         rc.pop();
         Err(format!(

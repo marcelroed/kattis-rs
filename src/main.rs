@@ -1,6 +1,4 @@
-#![feature(in_band_lifetimes)]
 #![feature(async_closure)]
-// #![feature(try_trait)]
 
 use clap::{App, Arg};
 
@@ -31,20 +29,22 @@ pub async fn main() -> io::Result<()> {
         .about("Tests Kattis competitive programming problems.")
         .arg(
             Arg::new("problems")
-                .about(
+                .help(
                     "Names of the problems to test.\
                     The format needs to be {problem} in open.kattis.com/problems/{problem}. \
                     If left empty, the problem name will be the name of the last edited source file. \
                     Make sure that source files use the file name stem {problem}.",
                 )
+                .allow_invalid_utf8(true)
                 .required(false)
                 .min_values(0)
                 .multiple_occurrences(true)
                 .value_name("PROBLEM"))
         .arg(
             Arg::new("submit")
-                .about("Problems after this flag are submitted if successful.\
+                .help("Problems after this flag are submitted if successful.\
                            If no problems are listed, use problems from regular args.")
+                .allow_invalid_utf8(true)
                 .multiple_values(true)
                 .required(false)
                 .min_values(0)
@@ -53,18 +53,18 @@ pub async fn main() -> io::Result<()> {
                 .value_name("SUBMIT_PROBLEM"))
         .arg(
             Arg::new("force")
-                .about("Force submission even if submitted problems don't pass local tests.")
+                .help("Force submission even if submitted problems don't pass local tests.")
                 .short('f')
+                .requires("submit")
+                .takes_value(false)
                 .long("force")
         );
     let matches = app.get_matches_mut();
     let force = matches.is_present("force");
 
     let problem_names: Vec<_> = {
-        let mut problems = match matches.values_of_lossy("problems") {
-            Some(problems) => problems,
-            None => vec![],
-        };
+        let mut problems = matches.values_of_lossy("problems").unwrap_or_default();
+
         if let Some(subs) = matches.values_of_lossy("submit") {
             problems.append(&mut subs.into_iter().filter(|s| !problems.contains(s)).collect());
         }
@@ -78,9 +78,9 @@ pub async fn main() -> io::Result<()> {
                         this requires the latest edited file in this directory to be a kattis file.\
                         \nEncountered error: {}\n\
                         Perhaps you wanted the regular usage?",
-                        e.to_string()
+                        e
                     );
-                    eprintln!("{}", app.generate_usage());
+                    eprintln!("{}", app.render_usage());
                     std::process::exit(2);
                 }
             }

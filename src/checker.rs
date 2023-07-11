@@ -33,13 +33,13 @@ pub struct Problem {
 
 impl Problem {
     pub fn new(problem_name: &str) -> Result<Self> {
-        Ok(Problem {
-            problem_name: problem_name.to_string(),
+        Ok(Self {
+            problem_name: problem_name.to_owned(),
             submissions: Program::from_problem_name(problem_name)?,
             submit: false,
         })
     }
-    pub fn submit(mut self, submit: bool) -> Self {
+    pub const fn submit(mut self, submit: bool) -> Self {
         self.submit = submit;
         self
     }
@@ -95,7 +95,7 @@ impl Program {
     pub fn from_problem_name(problem_name: &str) -> Result<Vec<Self>> {
         Ok(find_source(problem_name)?
             .into_iter()
-            .filter_map(|path| match Program::new(path.clone()) {
+            .filter_map(|path| match Self::new(path.clone()) {
                 Ok(program) => Some(program),
                 Err(e) => {
                     eprintln!(
@@ -110,7 +110,7 @@ impl Program {
     }
 
     pub fn new(path: PathBuf) -> Result<Self> {
-        Ok(Program {
+        Ok(Self {
             lang: {
                 if let Some(Some(Some(lang))) = path
                     .extension()
@@ -150,7 +150,7 @@ impl Program {
                     .await
                     .expect("Couldn't compile C++ program. Make sure GNU g++ is installed and in path (this is the compiler that kattis uses).");
 
-                self.binary = Some(output_path.to_owned());
+                self.binary = Some(output_path.clone());
                 if output.status.success() {
                     self.compiled = Some(Ok(()));
                     Ok(())
@@ -180,14 +180,14 @@ impl Program {
                         "Couldn't compile Rust program. Make sure rustc is installed and in path.",
                     );
 
-                self.binary = Some(output_path.to_owned());
+                self.binary = Some(output_path.clone());
                 if output.status.success() {
                     self.compiled = Some(Ok(()));
                     Ok(())
                 } else {
                     let mut err =
                         format!("{}\n", self.source.file_name().unwrap().to_str().unwrap());
-                    err.push_str(&String::from_utf8_lossy(&output.stderr).into_owned());
+                    err.push_str(&String::from_utf8_lossy(&output.stderr));
                     self.compiled = Some(Err(err));
                     Err("Compile Error!".into())
                 }
@@ -220,7 +220,7 @@ impl Program {
         }
     }
 
-    async fn run_problem(&'a self, pio: &'a ProblemIO) -> Result<(&'a ProblemIO, Output)> {
+    async fn run_problem<'a>(&'a self, pio: &'a ProblemIO) -> Result<(&'a ProblemIO, Output)> {
         match self.spawn_process(std::fs::File::open(&pio.input)?) {
             Ok(child) => {
                 let results = child.wait_with_output().await.unwrap();
@@ -230,14 +230,14 @@ impl Program {
         }
     }
 
-    pub fn run_problems(
+    pub fn run_problems<'a>(
         &'a self,
         ios: &'a [ProblemIO],
     ) -> Result<impl Stream<Item = Result<(&ProblemIO, Output)>> + 'a> {
         let mut tasks = FuturesOrdered::new();
         for (_i, pio) in ios.iter().enumerate() {
             let task = self.run_problem(pio);
-            tasks.push(task);
+            tasks.push_back(task);
         }
         Ok(tasks)
     }
@@ -277,27 +277,26 @@ enum Lang {
 }
 
 impl Lang {
-    pub fn compiled(&self) -> bool {
+    pub const fn compiled(&self) -> bool {
         match self {
-            Lang::Cpp => true,
-            Lang::Rust => true,
-            Lang::Python => false,
+            Self::Cpp | Self::Rust => true,
+            Self::Python => false,
         }
     }
     pub fn extension(&self) -> String {
         match self {
-            Lang::Cpp => "cpp",
-            Lang::Rust => "rs",
-            Lang::Python => "py",
+            Self::Cpp => "cpp",
+            Self::Rust => "rs",
+            Self::Python => "py",
         }
         .to_string()
     }
 
     pub fn from_extension(ext: &str) -> Option<Self> {
         match ext {
-            "cpp" => Some(Lang::Cpp),
-            "py" => Some(Lang::Python),
-            "rs" => Some(Lang::Rust),
+            "cpp" => Some(Self::Cpp),
+            "py" => Some(Self::Python),
+            "rs" => Some(Self::Rust),
             _ => None,
         }
     }
@@ -390,7 +389,7 @@ struct CaseRun {
 }
 
 impl CaseRun {
-    pub fn passed(&self) -> bool {
+    pub const fn passed(&self) -> bool {
         match &self.run_result {
             RunResult::Completed(cr) => cr.failed.is_none(),
             _ => false,
@@ -457,7 +456,7 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
             .map(async move |program| -> ProblemInstance {
                 let instance_results = match &program.compiled {
                     Some(Err(compile_error)) => {
-                        ProblemInstanceResult::CompileError(compile_error.to_owned())
+                        ProblemInstanceResult::CompileError(compile_error.clone())
                     }
                     Some(Ok(())) => {
                         // Run program
@@ -497,7 +496,7 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
                                     }
                                 };
                                 CaseRun {
-                                    case_name: pio.name.to_owned(),
+                                    case_name: pio.name.clone(),
                                     run_result,
                                 }
                             });

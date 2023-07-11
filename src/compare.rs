@@ -20,13 +20,13 @@ pub struct CompareResult {
 
 impl CompareResult {
     pub fn new(x: Vec<LineStatus>) -> Self {
-        let failed = if (&x).iter().all(|x| matches!(x, LineStatus::Correct(_))) {
+        let failed = if x.iter().all(|x| matches!(x, LineStatus::Correct(_))) {
             None
         } else {
             Some(x)
         };
 
-        CompareResult { failed }
+        Self { failed }
     }
 }
 

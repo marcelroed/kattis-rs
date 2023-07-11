@@ -1,6 +1,6 @@
 [package]
 name = "kattis-rs"
-version = "1.2.5"
+version = "1.3.0"
 authors = ["Marcel H Rød <marcelroed@gmail.com>"]
 edition = "2021"
 homepage = "https://github.com/marcelroed/"
@@ -11,16 +11,19 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
-name = "kattis-rs"
+name = "kattis"
 path = "src/main.rs"
+
+[toolchain]
+channel = "nightly"
 
 
 [dependencies]
 reqwest = {version = "0.11", features = ["blocking", "json", "cookies", "multipart"]}
 tempfile = "3"
 zip = "0"
-clap = { version = "3.0.0-rc.7", features = ["suggestions", "color"] }
-futures = "0.3"
+clap = { version = "3", features = ["suggestions", "color"] }
+futures = "0"
 tokio = { version = "1", features = ["full"] }
 walkdir = "2"
 colored = "2"
