@@ -19,7 +19,7 @@ use std::process::{Output, Stdio};
 
 use crate::compare::{compare, CompareResult};
 use crate::submit::submit;
-use enum_iterator::IntoEnumIterator;
+use enum_iterator::{Sequence, all};
 use futures::executor::block_on;
 use itertools::any;
 use tokio::io::AsyncReadExt;
@@ -269,7 +269,7 @@ impl Program {
     }
 }
 
-#[derive(IntoEnumIterator, PartialEq, Clone, Eq, Debug)]
+#[derive(Sequence, PartialEq, Clone, Eq, Debug)]
 enum Lang {
     Cpp,
     Python,
@@ -326,7 +326,7 @@ pub fn find_source(problem_name: &str) -> Result<Vec<PathBuf>> {
                 if let Some(s) = de.file_name().to_str() {
                     let ends_with_extension = |l: Lang| { s.ends_with(&format!(".{}", l.extension())) };
                     if s.starts_with(&format!("{}.", problem_name))
-                        && any(Lang::into_enum_iter(), ends_with_extension)
+                        && any(all::<Lang>(), ends_with_extension)
                     {
                         return Some(de.path().to_path_buf());
                     }
@@ -346,7 +346,7 @@ pub fn find_newest_source() -> Result<String> {
             if let Ok(de) = f {
                 if let Some(s) = de.file_name().to_str() {
                     let ends_with_extension = |l: Lang| { s.ends_with(&format!(".{}", l.extension())) };
-                    if any(Lang::into_enum_iter(), ends_with_extension) {
+                    if any(all::<Lang>(), ends_with_extension) {
                         return Some(de);
                     }
                 }
@@ -422,7 +422,7 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
                 "Found no source code for problem ",
                 &problem.problem_name.bold(),
                 ". Make sure that the file exists with one of the supported extensions\n".red(),
-                Lang::into_enum_iter()
+                all::<Lang>()
                     .map(|e| e.extension())
                     .collect::<Vec<String>>()
                     .join(", ")
@@ -560,11 +560,11 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
 #[cfg(test)]
 mod test {
     use crate::checker::Lang;
-    use enum_iterator::IntoEnumIterator;
+    use enum_iterator::all;
 
     #[test]
     fn complete_langs() {
-        let langs = Lang::into_enum_iter();
+        let langs = all::<Lang>();
         for lang in langs {
             assert!(Lang::from_extension(&lang.extension()).unwrap() == lang);
         }

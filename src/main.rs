@@ -1,6 +1,6 @@
 #![feature(async_closure)]
 
-use clap::{App, Arg};
+use clap::{arg, crate_version, Command, ArgAction};
 
 use crate::checker::Problem;
 use std::collections::HashSet;
@@ -14,8 +14,6 @@ mod submit;
 
 type Result<T> = std::result::Result<T, Box<dyn error::Error + Send + Sync + 'static>>;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 #[tokio::main]
 pub async fn main() -> io::Result<()> {
     // Create folder in tmp if it doesn't already exist
@@ -23,50 +21,57 @@ pub async fn main() -> io::Result<()> {
         eprintln!("{}", e);
     }
 
-    let mut app = App::new("Kattis Tester")
-        .version(VERSION)
+    let mut app = Command::new("Kattis Tester")
+        .version(crate_version!())
         .author("Marcel Rød")
-        .about("Tests Kattis competitive programming problems.")
+        .about("Tests and submits Kattis competitive programming problems.")
         .arg(
-            Arg::new("problems")
+            arg!([problems] ...)
                 .help(
-                    "Names of the problems to test.\
+                    "Names of the problems to test. \
                     The format needs to be {problem} in open.kattis.com/problems/{problem}. \
                     If left empty, the problem name will be the name of the last edited source file. \
-                    Make sure that source files use the file name stem {problem}.",
+                    Make sure that source files use the file name stem {problem}, e.g. {problem}.py.",
                 )
-                .allow_invalid_utf8(true)
+                // .allow_invalid_utf8(true)
                 .required(false)
-                .min_values(0)
-                .multiple_occurrences(true)
+                // .min_values(0)
+                // .multiple_occurrences(true)
                 .value_name("PROBLEM"))
         .arg(
-            Arg::new("submit")
-                .help("Problems after this flag are submitted if successful.\
+            arg!(--submit)
+                .help("Problems after this flag are submitted if successful. \
                            If no problems are listed, use problems from regular args.")
-                .allow_invalid_utf8(true)
-                .multiple_values(true)
+                // .allow_invalid_utf8(true)
+                // .multiple_values(true)
                 .required(false)
-                .min_values(0)
+                // .min_values(0)
+                .num_args(0..)
                 .short('s')
                 .long("submit")
+                .action(ArgAction::Append)
                 .value_name("SUBMIT_PROBLEM"))
         .arg(
-            Arg::new("force")
+            arg!(--force)
                 .help("Force submission even if submitted problems don't pass local tests.")
                 .short('f')
+                .default_value("false")
                 .requires("submit")
-                .takes_value(false)
+                .action(ArgAction::SetTrue)
+                // .takes_value(false)
                 .long("force")
         );
     let matches = app.get_matches_mut();
-    let force = matches.is_present("force");
+    let force: bool = *matches.get_one("force").unwrap();
 
     let problem_names: Vec<_> = {
-        let mut problems = matches.values_of_lossy("problems").unwrap_or_default();
+        let mut problems: Vec<String> = matches.try_get_many("problems").unwrap_or_default().unwrap_or_default().map(|s: &String| (*s).clone()).collect();
 
-        if let Some(subs) = matches.values_of_lossy("submit") {
-            problems.append(&mut subs.into_iter().filter(|s| !problems.contains(s)).collect());
+        if let Some(subs) = matches.get_many("submit") {
+            problems.append(&mut subs.into_iter()
+                .filter(|s| !problems.contains(s))
+                .map(|s| s.to_owned())
+                .collect());
         }
 
         if problems.is_empty() {
@@ -90,15 +95,16 @@ pub async fn main() -> io::Result<()> {
     };
 
     let to_submit: HashSet<String> = match (
-        matches.is_present("submit"),
-        matches.values_of_lossy("submit"),
+        matches.get_many::<String>("submit").is_some(),
+        matches.try_get_many::<String>("submit").unwrap_or_default(),
     ) {
         (false, _) => vec![],
         (true, Some(sub)) => {
-            if sub.is_empty() {
+            if sub.len() == 0 {
                 problem_names.clone()
             } else {
                 sub
+                    .map(|v| v.to_owned()).collect::<Vec<_>>()
             }
         }
         (true, None) => problem_names.clone(),
