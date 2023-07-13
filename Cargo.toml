@@ -1,6 +1,6 @@
 [package]
 name = "kattis-rs"
-version = "1.4.1"
+version = "1.4.2"
 authors = ["Marcel H Rød <marcelroed@gmail.com>"]
 edition = "2021"
 homepage = "https://github.com/marcelroed/"
