@@ -4,18 +4,14 @@ use clap::{arg, crate_version, Command, ArgAction};
 
 use crate::checker::Problem;
 use std::collections::HashSet;
-use std::error;
-use tokio::io;
 
 mod checker;
 mod compare;
 mod fetch;
 mod submit;
 
-type Result<T> = std::result::Result<T, Box<dyn error::Error + Send + Sync + 'static>>;
-
 #[tokio::main]
-pub async fn main() -> io::Result<()> {
+pub async fn main(){
     // Create folder in tmp if it doesn't already exist
     if let Err(e) = fetch::initialize_temp_dir() {
         eprintln!("{}", e);
@@ -122,7 +118,7 @@ pub async fn main() -> io::Result<()> {
         .collect();
 
     let _problem_results = checker::check_problems(problems, force).await;
-    Ok(())
+    // Ok(())
 }
 
 #[cfg(test)]

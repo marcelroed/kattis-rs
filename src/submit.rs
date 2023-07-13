@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use crate::Result;
 use colored::Colorize;
 use regex::Regex;
 use reqwest::header;
@@ -8,6 +7,7 @@ use std::fmt::Debug;
 use std::io::{Error, ErrorKind};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use anyhow::{Result, anyhow};
 
 #[derive(Clone, Debug)]
 struct KattisConfig {
@@ -26,7 +26,7 @@ impl KattisConfig{
         };
 
         let read_setting_with_error = |first, second| -> Result<String>{
-            read_setting(first, second).ok_or_else(|| format!("Failed to read {}.{} from .kattisrc", first, second).into())
+            read_setting(first, second).ok_or_else(|| anyhow!("Failed to read {}.{} from .kattisrc", first, second).into())
         };
 
         Ok(Self {
@@ -57,11 +57,11 @@ async fn get_config() -> Result<KattisConfig> {
         let mut config_string = String::new();
         config_file.read_to_string(&mut config_string).await?;
         config_string = config_string.replace(": ", "=");
-        let config = configparser::ini::Ini::new().read(config_string)?;
+        let config = configparser::ini::Ini::new().read(config_string).expect("Failed to read config file.");
         KattisConfig::from_config(&config)
     } else {
         rc.pop();
-        Err(format!(
+        Err(anyhow!(
             "\
 Failed to read in a config file from your home directory.
 In order to submit code from the CLI, you need to be authenticated.
@@ -79,8 +79,7 @@ loginurl: https://<kattis>/login
 submissionurl: https://<kattis>/submit
         ",
             rc.to_str().unwrap()
-        )
-        .into())
+        ))
     }
 }
 
@@ -157,6 +156,6 @@ pub async fn submit(
         open::that(format!("{}/{}", config.submissions_url, submission_id))?;
         Ok(())
     } else {
-        Err("Failed to read submission ID from submission response".into())
+        Err(anyhow!("Failed to read submission ID from submission response"))
     }
 }

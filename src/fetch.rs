@@ -1,4 +1,5 @@
-use crate::Result;
+// use crate::Result;
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
 use futures::io::SeekFrom;
@@ -32,7 +33,7 @@ impl ProblemIO {
                 output,
             })
         } else {
-            Err("Kattis zip missing input or output".into())
+            Err(anyhow!("Kattis zip missing input or output"))
         }
     }
 
@@ -113,7 +114,7 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
         } else if file_name.ends_with(".ans") {
             *o = Some(file_path);
         } else {
-            return Err("Incompatible input format".into());
+            return Err(anyhow!("Incompatible input format"));
         }
     }
 

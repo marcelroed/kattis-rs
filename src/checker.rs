@@ -6,7 +6,7 @@ use tokio::process::{Child, Command};
 use tokio::spawn;
 
 use crate::fetch::{fetch_problem, ProblemIO};
-use crate::Result;
+use anyhow::{Result, anyhow, bail};
 use colored::Colorize;
 use futures::prelude::stream::*;
 use futures::stream::TryStreamExt;
@@ -77,7 +77,7 @@ pub struct Program {
 impl Drop for Program {
     fn drop(&mut self) {
         if let (true, Some(path)) = (&self.lang.compiled(), &self.binary) {
-            std::fs::remove_file(path).ok();
+            std::fs::remove_file(path).unwrap_or_else(|_| eprintln!("[Warning] Failed to remove binary for {} at {:?}", self.name(), path));
         }
     }
 }
@@ -118,7 +118,7 @@ impl Program {
                 {
                     lang
                 } else {
-                    return Err("Filetype could not be read.".into());
+                    bail!("Filetype could not be read.");
                 }
             },
             source: path,
@@ -129,7 +129,7 @@ impl Program {
 
     pub async fn compile(&mut self) -> Result<()> {
         if self.compiled.is_some() {
-            return Err("Already compiled!".into());
+            return Err(anyhow!("Already compiled!"));
         }
         match self.lang {
             Lang::Cpp => {
@@ -158,7 +158,7 @@ impl Program {
                     let mut err = format!("{}\n", self.name());
                     err.push_str(&String::from_utf8(output.stderr).unwrap());
                     self.compiled = Some(Err(err));
-                    Err("Compile Error!".into())
+                    Err(anyhow!("Compile Error!"))
                 }
             }
             Lang::Rust => {
@@ -189,7 +189,7 @@ impl Program {
                         format!("{}\n", self.source.file_name().unwrap().to_str().unwrap());
                     err.push_str(&String::from_utf8_lossy(&output.stderr));
                     self.compiled = Some(Err(err));
-                    Err("Compile Error!".into())
+                    Err(anyhow!("Compile Error!"))
                 }
             }
             Lang::Python => {
@@ -216,7 +216,7 @@ impl Program {
                     .spawn()?),
             }
         } else {
-            Err("Program not compiled".into())
+            Err(anyhow!("Program not compiled"))
         }
     }
 
@@ -355,18 +355,17 @@ pub fn find_newest_source() -> Result<String> {
         })
         .max_by_key(|de| de.metadata().unwrap().modified().unwrap())
         .map(|de| de.path().file_stem().unwrap().to_str().unwrap().to_string())
-        .ok_or_else(|| "No source found".into());
+        .ok_or_else(|| anyhow!("No source found"));
 
     match result {
         Ok(pname) => {
             if block_on(crate::fetch::problem_exists(pname.as_str()))? {
                 Ok(pname)
             } else {
-                Err(format!(
+                Err(anyhow!(
                     "Problem name {} does not exist on open.kattis.com",
                     pname.as_str().bold()
-                )
-                .into())
+                ))
             }
         }
         Err(e) => Err(e),
