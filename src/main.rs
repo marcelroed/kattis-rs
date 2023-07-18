@@ -1,20 +1,29 @@
-#![feature(async_closure)]
+#![warn(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 
+use std::path::Path;
+use anyhow::{Context, Result};
+use std::sync::OnceLock;
 use clap::{arg, crate_version, Command, ArgAction};
+use clap::builder::NonEmptyStringValueParser;
+use log::info;
 
-use crate::checker::Problem;
-use std::collections::HashSet;
+use crate::checker::{find_source_from_path, Problem, ProblemSource};
 
 mod checker;
 mod compare;
 mod fetch;
 mod submit;
 
+pub static RECURSE_DEPTH: OnceLock<usize> = OnceLock::new();
+
+/// # Panics
+/// Panics if something goes wrong.
 #[tokio::main]
 pub async fn main(){
+    pretty_env_logger::init();
     // Create folder in tmp if it doesn't already exist
     if let Err(e) = fetch::initialize_temp_dir() {
-        eprintln!("{}", e);
+        eprintln!("{e}");
     }
 
     let mut app = Command::new("Kattis Tester")
@@ -24,101 +33,90 @@ pub async fn main(){
         .arg(
             arg!([problems] ...)
                 .help(
-                    "Names of the problems to test. \
-                    The format needs to be {problem} in open.kattis.com/problems/{problem}. \
-                    If left empty, the problem name will be the name of the last edited source file. \
-                    Make sure that source files use the file name stem {problem}, e.g. {problem}.py.",
+                    "Files to test. \
+                    Each problem filename needs to match {problem}.{extension} where {problem} can be found from the url of the kattis problem \
+                    at open.kattis.com/problems/{problem}. \
+                    If left empty, the problem will be inferred by looking for the latest edited valid source file.",
                 )
-                // .allow_invalid_utf8(true)
                 .required(false)
-                // .min_values(0)
-                // .multiple_occurrences(true)
+                .value_parser(NonEmptyStringValueParser::new())
                 .value_name("PROBLEM"))
         .arg(
             arg!(--submit)
-                .help("Problems after this flag are submitted if successful. \
-                           If no problems are listed, use problems from regular args.")
-                // .allow_invalid_utf8(true)
-                // .multiple_values(true)
-                .required(false)
-                // .min_values(0)
-                .num_args(0..)
                 .short('s')
-                .long("submit")
-                .action(ArgAction::Append)
-                .value_name("SUBMIT_PROBLEM"))
+                .help("If flag is set, all successful problems will be submitted.")
+                .required(false)
+                .default_value("false")
+                .action(ArgAction::SetTrue))
         .arg(
             arg!(--force)
-                .help("Force submission even if submitted problems don't pass local tests.")
                 .short('f')
+                .help("Force submission even if submitted problems don't pass local tests.")
+                .required(false)
                 .default_value("false")
                 .requires("submit")
                 .action(ArgAction::SetTrue)
-                // .takes_value(false)
-                .long("force")
+        )
+        .arg(
+            arg!(--recurse <DEPTH>)
+                .short('r')
+                .help("Number of directory levels to recurse into when searching for problem solutions.")
+                .required(false)
+                .value_parser(|s: &str| s.parse::<usize>().or_else(|e| {
+                    if s.to_lowercase() == "true" { Ok(100) } else { Err(e) }
+                }))
+                .default_value("1")
+                .action(ArgAction::Set)
         );
     let matches = app.get_matches_mut();
-    let force: bool = *matches.get_one("force").unwrap();
+    let force_flag: bool = matches.get_one("force").copied().unwrap_or(false);
+    let submit_flag: bool = matches.get_one("submit").copied().unwrap_or(false);
+    let recurse_depth: usize = matches.get_one("recurse").copied().unwrap_or(0);
+    unsafe {RECURSE_DEPTH.set(recurse_depth).unwrap_unchecked()};
+    info!("Recursing {} levels into directories.", recurse_depth);
 
-    let problem_names: Vec<_> = {
-        let mut problems: Vec<String> = matches.try_get_many("problems").unwrap_or_default().unwrap_or_default().map(|s: &String| (*s).clone()).collect();
+    let problem_args: Vec<&str> = matches
+        .get_many::<String>("problems").unwrap_or_default()
+        .map(String::as_str)
+        .collect();
 
-        if let Some(subs) = matches.get_many("submit") {
-            problems.append(&mut subs.into_iter()
-                .filter(|s| !problems.contains(s))
-                .map(|s| s.to_owned())
-                .collect());
-        }
-
-        if problems.is_empty() {
+    let problem_sources: Vec<ProblemSource> = {
+        if problem_args.is_empty() {  // Look for newest source file
             match checker::find_newest_source() {
-                Ok(pname) => vec![pname],
+                Ok(problem_source) => vec![problem_source],
                 Err(e) => {
                     eprintln!(
-                        "Although kattis can be used without arguments, \
-                        this requires the latest edited file in this directory to be a kattis file.\
-                        \nEncountered error: {}\n\
-                        Perhaps you wanted the regular usage?",
-                        e
+                        "Although kattis can be used without problem name arguments, \
+                        this requires the latest edited file in this directory to be a kattis source code file.\
+                        \nEncountered error: {e}\n\
+                        Perhaps you wanted the regular usage?"
                     );
                     eprintln!("{}", app.render_usage());
-                    std::process::exit(2);
+                    std::process::exit(1);
                 }
             }
-        } else {
-            problems
+        } else { // Use the source files specified
+            problem_args.into_iter()
+                .map(Path::new)
+                .map(find_source_from_path)
+                .collect::<Result<Vec<_>>>().context("Failed to find source files.").unwrap()
         }
     };
 
-    let to_submit: HashSet<String> = match (
-        matches.get_many::<String>("submit").is_some(),
-        matches.try_get_many::<String>("submit").unwrap_or_default(),
-    ) {
-        (false, _) => vec![],
-        (true, Some(sub)) => {
-            if sub.len() == 0 {
-                problem_names.clone()
-            } else {
-                sub
-                    .map(|v| v.to_owned()).collect::<Vec<_>>()
-            }
-        }
-        (true, None) => problem_names.clone(),
-    }
-    .into_iter()
-    .collect();
-
-    let problems: Vec<Problem> = problem_names
+    let problems: Vec<Problem> = problem_sources
         .into_iter()
-        .filter_map(|problem_name| checker::Problem::new(&problem_name).ok())
+        .map(Problem::new)
         .map(|problem| {
-            let should_submit = to_submit.contains(&problem.problem_name);
-            problem.submit(should_submit)
+            problem.set_submit(submit_flag)
         })
         .collect();
 
-    let _problem_results = checker::check_problems(problems, force).await;
-    // Ok(())
+    checker::check_problems(problems, force_flag).await.into_iter()
+        .for_each(|(problem, res)| {
+            if let Err(e) = res {
+                eprintln!("Failed to check problem {}: {e}", problem.problem_name);
+            }
+        });
 }
 
 #[cfg(test)]

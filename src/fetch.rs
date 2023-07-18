@@ -1,20 +1,23 @@
 // use crate::Result;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use std::collections::HashMap;
 
 use futures::io::SeekFrom;
 use itertools::Itertools;
+use log::info;
 use std::env::temp_dir;
 use std::fs;
 use std::io::Read;
+use std::path::Path;
 use tempfile::TempPath;
 use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, ErrorKind, AsyncSeekExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, ErrorKind};
+use std::convert::Into;
 
 pub fn initialize_temp_dir() -> Result<()> {
     let mut tmp_dir = std::env::temp_dir();
     tmp_dir.push("kattis/problem_files/");
-    fs::create_dir_all(tmp_dir).map_err(|e| e.into())
+    fs::create_dir_all(tmp_dir).map_err(Into::into)
 }
 
 #[derive(Debug)]
@@ -50,14 +53,15 @@ fn remove_suffix(s: &str, p: Vec<&str>) -> String {
         if let Some(stripped) = s.strip_suffix(pat) {
             return stripped.into();
         }
-    }
+}
     s.into()
 }
 
-pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
+pub async fn problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
+    info!("Fetching problem {}", problem_name);
     // Fetch from Kattis
-    let mut problem_path = std::env::temp_dir();
-    problem_path.push(format!("kattis/problem_files/{}.zip", problem_name));
+    let mut problem_path = temp_dir();
+    problem_path.push(format!("kattis/problem_files/{problem_name}.zip"));
 
     let mut problem_file = match File::open(&problem_path).await {
         Ok(f) => f,
@@ -72,8 +76,7 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
 
                 let tmp = reqwest::get(
                     format!(
-                        "https://open.kattis.com/problems/{}/file/statement/samples.zip",
-                        problem_name
+                        "https://open.kattis.com/problems/{problem_name}/file/statement/samples.zip",
                     )
                     .as_str(),
                 )
@@ -90,7 +93,7 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
         },
     };
 
-    let mut file_contents = Vec::with_capacity(problem_file.metadata().await?.len() as usize);
+    let mut file_contents = Vec::with_capacity(problem_file.metadata().await?.len().try_into()?);
     problem_file.read_buf(&mut file_contents).await?;
     let cursor = std::io::Cursor::new(file_contents);
 
@@ -102,35 +105,40 @@ pub async fn fetch_problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
 
     for file_name in file_names {
         let mut out_file = tempfile::NamedTempFile::new()?;
-        let mut zipped_file_reader = zip.by_name(&file_name).unwrap();
+        let mut zipped_file_reader = zip.by_name(&file_name)?;
         std::io::copy(&mut zipped_file_reader, &mut out_file)?;
         let file_path = out_file.into_temp_path();
         let (ref mut i, ref mut o) = *io_map
-            .entry(remove_suffix(&file_name, vec![".in", ".ans"]).clone())
+            .entry(remove_suffix(&file_name, vec![".in", ".ans"]))
             .or_insert((None, None));
 
-        if file_name.ends_with(".in") {
+        let filename_path = Path::new(&file_name);
+        let extension = filename_path.extension();
+        if extension.map_or(false, |e| e.eq_ignore_ascii_case("in")) {
             *i = Some(file_path);
-        } else if file_name.ends_with(".ans") {
+        } else if extension.map_or(false, |e| e.eq_ignore_ascii_case("ans")) {
             *o = Some(file_path);
         } else {
-            return Err(anyhow!("Incompatible input format"));
+            bail!("Incompatible input format");
         }
     }
 
+    info!("Problem {problem_name} fetched");
     io_map
         .into_iter()
         .map(|(name, io)| ProblemIO::new(name, io))
-        .sorted_by_key(|rpio| match rpio {
-            Ok(pio) => pio.name.clone(),
-            _ => "zzzzz".to_string(),
+        .sorted_by(|a, b| {
+            Ord::cmp(a.as_ref().map(|x| x.name.as_str()).unwrap_or(""),
+                     b.as_ref().map(|x| x.name.as_str()).unwrap_or(""))
         })
-        .collect::<Result<Vec<_>>>()
+        .collect()
 }
 
 pub async fn problem_exists(problem_name: &str) -> Result<bool> {
     let mut problem_path = temp_dir();
     problem_path.push("kattis/problem_files/");
+    info!("Checking if problem exists locally at {problem_path:?}");
+
     let problem_names: Vec<_> = walkdir::WalkDir::new(problem_path)
         .max_depth(1)
         .into_iter()
@@ -146,10 +154,12 @@ pub async fn problem_exists(problem_name: &str) -> Result<bool> {
         return Ok(true);
     }
 
-    let str = reqwest::get(format!("https://open.kattis.com/problems/{}", problem_name).as_str())
+    let str = reqwest::get(&format!("https://open.kattis.com/problems/{problem_name}"))
         .await?
         .text()
         .await?;
+
+    info!("Result of problem_exists: {str}");
 
     Ok(!str.contains("404: Not Found"))
 }

@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use futures::future::join;
 use futures::future::join_all;
 
@@ -6,7 +5,7 @@ use std::str::from_utf8;
 use tokio::process::{Child, Command};
 use tokio::spawn;
 
-use crate::fetch;
+use crate::{fetch, RECURSE_DEPTH};
 use crate::fetch::ProblemIO;
 use anyhow::{Result, anyhow, bail};
 use colored::Colorize;
@@ -16,36 +15,40 @@ use futures::stream::TryStreamExt;
 use regex::Regex;
 use std::fmt;
 use std::fmt::Formatter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 
 use crate::compare::{compare, ComparisonResult};
 use crate::submit::submit;
 use enum_iterator::{Sequence, all};
 use futures::executor::block_on;
-use itertools::{any, Itertools};
+use itertools::Itertools;
 use tokio::io::AsyncReadExt;
+use guard::guard;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
-use log::info; // Allow checking of signal status on unix-based systems
+
+use std::time::SystemTime;
+use log::info;
+use walkdir::DirEntry;
 
 #[derive(Debug)]
 pub struct Problem {
     pub problem_name: String,
-    pub submissions: Vec<Program>,
+    pub submission: Program,
     pub submit: bool,
 }
 
 impl Problem {
-    pub fn new(problem_name: &str) -> Result<Self> {
-        Ok(Self {
-            problem_name: problem_name.to_owned(),
-            submissions: Program::from_problem_name(problem_name)?,
+    pub fn new(problem_source: ProblemSource) -> Self {
+        Self {
+            problem_name: problem_source.problem_name.clone(),
+            submission: Program::from_problem_source(problem_source),
             submit: false,
-        })
+        }
     }
-    pub const fn submit(mut self, submit: bool) -> Self {
+    pub const fn set_submit(mut self, submit: bool) -> Self {
         self.submit = submit;
         self
     }
@@ -65,7 +68,7 @@ pub async fn check_problems(problems: Vec<Problem>, force: bool) -> Vec<(Problem
         .map(|r| match r {
             Ok(pr) => pr,
             Err(e) => {
-                eprintln!("HERE {}", e);
+                eprintln!("HERE {e}");
                 panic!();
             }
         })
@@ -99,43 +102,37 @@ impl Program {
             .unwrap()
     }
 
-    pub fn from_problem_name(problem_name: &str) -> Result<Vec<Self>> {
-        find_source(problem_name)
-            .into_iter()
-            .filter_map(|path| {
-                let program = Self::new(path);
-                match &program {
-                    Err(e) => {
-                        eprintln!("Failed to read matched program: {}", e);
-                        None
-                    },
-                    Ok(_) => Some(program)
-                }
-            })
-            .collect()
-    }
-
-    pub fn new(path: PathBuf) -> Result<Self> {
-        Ok(Self {
-            lang: {
-                let extension = path.extension()
-                .and_then(OsStr::to_str)
-                .and_then(Lang::from_extension);
-                if let Some(ext) = extension {
-                    ext
-                } else {
-                    bail!("Failed to read {}, since the filetype {} is not supported.
-                    The supported filetypes are: {}",
-                        path.display(),
-                        path.extension().and_then(std::ffi::OsStr::to_str).unwrap_or("<no extension>"),
-                        all::<Lang>().map(|l| l.extension()).join(", "));
-                }
-            },
-            source: path,
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn from_problem_source(problem_source: ProblemSource) -> Self {
+        Self {
+            lang: problem_source.lang,
+            source: problem_source.path,
             binary: None,
             compiled: None,
-        })
+        }
     }
+
+    // pub fn new(path: PathBuf) -> Result<Self> {
+    //     Ok(Self {
+    //         lang: {
+    //             let extension = path.extension()
+    //             .and_then(OsStr::to_str)
+    //             .and_then(Lang::from_extension);
+    //             if let Some(ext) = extension {
+    //                 ext
+    //             } else {
+    //                 bail!("Failed to read {}, since the filetype {} is not supported.
+    //                 The supported filetypes are: {}",
+    //                     path.display(),
+    //                     path.extension().and_then(std::ffi::OsStr::to_str).unwrap_or("<no extension>"),
+    //                     all::<Lang>().map(|l| l.extension()).join(", "));
+    //             }
+    //         },
+    //         source: path,
+    //         binary: None,
+    //         compiled: None,
+    //     })
+    // }
 
     pub async fn compile(&mut self) -> Result<()> {
         if self.compiled.is_some() {
@@ -284,7 +281,7 @@ impl Program {
 }
 
 #[derive(Sequence, PartialEq, Clone, Eq, Debug)]
-enum Lang {
+pub enum Lang {
     Cpp,
     Python,
     Rust,
@@ -305,13 +302,17 @@ impl Lang {
         }
     }
 
-    pub fn from_extension(ext: &str) -> Option<Self> {
-        match ext {
+    pub fn from_extension(ext: impl AsRef<str>) -> Option<Self> {
+        match ext.as_ref() {
             "cpp" => Some(Self::Cpp),
             "py" => Some(Self::Python),
             "rs" => Some(Self::Rust),
             _ => None,
         }
+    }
+
+    pub fn is_valid_extension(ext: &str) -> bool {
+        Self::from_extension(ext).is_some()
     }
 }
 
@@ -330,57 +331,99 @@ impl fmt::Display for Lang {
     }
 }
 
-pub fn find_source(problem_name: &str) -> Vec<PathBuf> {
-    walkdir::WalkDir::new(".")
-        .max_depth(3)
-        .into_iter()
-        .filter_map(|f| {
-            if let Ok(de) = f {
-                if let Some(s) = de.file_name().to_str() {
-                    let ends_with_extension = |l: Lang| { s.ends_with(&format!(".{}", l.extension())) };
-                    if s.starts_with(&format!("{}.", problem_name))
-                        && any(all::<Lang>(), ends_with_extension)
-                    {
-                        return Some(de.path().to_path_buf());
-                    }
-                }
-            }
-            None
+// pub fn find_source(problem_name: &str) -> Vec<PathBuf> {
+//     walkdir::WalkDir::new(".")
+//         .max_depth(*RECURSE_DEPTH.get().unwrap())
+//         .into_iter()
+//         .filter_map(|f| {
+//             if let Ok(de) = f {
+//                 if let Some(s) = de.file_name().to_str() {
+//                     let ends_with_extension = |l: Lang| { s.ends_with(&format!(".{}", l.extension())) };
+//                     if s.starts_with(&format!("{problem_name}."))
+//                         && any(all::<Lang>(), ends_with_extension)
+//                     {
+//                         return Some(de.path().to_path_buf());
+//                     }
+//                 }
+//             }
+//             None
+//         })
+//         .collect()
+// }
+
+pub fn find_source_from_path(path: &Path) -> Result<ProblemSource> {
+    if !path.is_file() {
+        bail!("Path {path:?} is not a file");
+    }
+    let extension = path.extension()
+        .ok_or_else(|| anyhow!("Path {path:?} has no extension"))?;
+    let lang = Lang::from_extension(extension.to_string_lossy())
+        .ok_or_else(|| anyhow!("Extension {extension:?} from path {path:?} is not supported. Expected one of {}",
+            all::<Lang>().map(|l| l.extension()).join(", ")))?;
+    let problem_name = path.file_stem()
+        .ok_or_else(|| anyhow!("Problem name not found in path {path:?}"))?;
+
+    if block_on(fetch::problem_exists(&problem_name.to_string_lossy()))? {
+        Ok(ProblemSource {
+            problem_name: problem_name.to_string_lossy().to_string(),
+            path: path.to_path_buf(),
+            lang,
         })
-        .collect()
+    } else {
+        bail!("Could not find the problem {problem_name:?} at open.kattis.com/problem/{problem_name:?}");
+    }
 }
 
-pub fn find_newest_source() -> Result<String> {
-    let result = walkdir::WalkDir::new(".")
-        .max_depth(3)
-        .into_iter()
-        .filter_map(|f| {
-            if let Ok(de) = f {
-                if let Some(s) = de.file_name().to_str() {
-                    let ends_with_extension = |l: Lang| { s.ends_with(&format!(".{}", l.extension())) };
-                    if any(all::<Lang>(), ends_with_extension) {
-                        return Some(de);
-                    }
-                }
-            }
-            None
-        })
-        .max_by_key(|de| de.metadata().unwrap().modified().unwrap())
-        .map(|de| de.path().file_stem().unwrap().to_str().unwrap().to_string())
-        .ok_or_else(|| anyhow!("No source found"));
+pub struct ProblemSource {
+    pub problem_name: String,
+    pub path: PathBuf,
+    pub lang: Lang,
+}
 
-    match result {
-        Ok(pname) => {
-            if block_on(crate::fetch::problem_exists(pname.as_str()))? {
-                Ok(pname)
+pub fn find_newest_source() -> Result<ProblemSource> {
+    let problem_path = walkdir::WalkDir::new(".")
+        .max_depth(*RECURSE_DEPTH.get().unwrap())
+        .into_iter().take(100_000)  // Look through at most 100_000 files
+        .filter_map(|f| -> Option<DirEntry> {  // Filter out files that don't have the right extension
+            let de = f.ok()?;
+
+            let file_path = de.path();
+            if !file_path.is_file() {return None;}; // Skip directories
+            let file_extension = file_path.extension()?.to_string_lossy();
+            if Lang::is_valid_extension(&file_extension) {
+                Some(de)
             } else {
-                Err(anyhow!(
-                    "Problem name {} does not exist on open.kattis.com",
-                    pname.as_str().bold()
-                ))
+                None
             }
-        }
-        Err(e) => Err(e),
+        })
+        .max_by_key(|de|  // Find the file modified the latest
+            de.metadata()
+                .map_err(|e| anyhow!("Failed to get metadata from file with error: {e}"))
+                .and_then(|x| x.modified().map_err(Into::into))
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        ).ok_or_else(|| anyhow!("No source files found."))?
+        .into_path();  // Get the path of the file
+
+
+    guard!(let Some(file_stem) = problem_path.file_stem() else {
+        bail!("No file stem found for file {problem_path:?}.");
+    });
+
+    let problem_name = file_stem.to_string_lossy();
+
+    if block_on(fetch::problem_exists(&problem_name))? {
+        let extension = problem_path.extension()
+            .ok_or_else(|| anyhow!("Path {problem_path:?} has no extension"))?;
+        Ok(ProblemSource {
+            problem_name: problem_name.to_string(),
+            lang: Lang::from_extension(extension.to_string_lossy()).ok_or_else(|| anyhow!("Unrecognized extension"))?,
+            path: problem_path,
+        })
+    } else {
+        bail!(
+            "Problem name {} does not exist on open.kattis.com",
+            problem_name.bold()
+        );
     }
 }
 
@@ -426,82 +469,71 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
     // Fetch problem IO
     let future_io = fetch::problem(&problem.problem_name);
 
-    // Find source paths
-    if problem.submissions.is_empty() {
-        println!("{}", &problem.problem_name.bright_white().bold());
-        println!(
-            "{}",
-            format!(
-                "{}{}{} ({}).\n",
-                "Found no source code for problem ",
-                &problem.problem_name.bold(),
-                ". Make sure that the file exists with one of the supported extensions\n".red(),
-                all::<Lang>()
-                    .map(|e| e.extension())
-                    .join(", ")
-            )
-            .red(),
-        );
-        return Ok(());
-    }
+    // // Find source paths
+    // if problem.submissions.is_empty() {
+    //     println!("{}", &problem.problem_name.bright_white().bold());
+    //     println!(
+    //         "{}",
+    //         format!(
+    //             "{}{}{} ({}).\n",
+    //             "Found no source code for problem ",
+    //             &problem.problem_name.bold(),
+    //             ". Make sure that the file exists with one of the supported extensions\n".red(),
+    //             all::<Lang>()
+    //                 .map(|e| e.extension())
+    //                 .join(", ")
+    //         )
+    //         .red(),
+    //     );
+    //     return Ok(());
+    // }
 
-    // Compile programs and fetch io
-    let (_, io) = join(
-        join_all(
-            problem
-                .submissions
-                .iter_mut()
-                .map(Program::compile),
-        ),
-        future_io,
-    )
-    .await;
+    // Compile programs and fetch the io for this problem
+    let (compile_result, io) = join(problem.submission.compile(), future_io).await;
+    compile_result?;
 
     // let compiled_programs = compiled_programs.into_iter().collect::<Vec<_>>();
 
-    let io = &io?;
+    let io = io?;
 
-    let run_results = run_problems(problem, io).await;
+    let problem_instance = run_problem(problem, &io).await;
 
     info!("Printing results");
     println!("{}", &problem.problem_name.bold());
-    for pi in run_results {
-        let program_name = pi.program.name();
-        match pi.result {
-            ProblemInstanceResult::Ran(cases) => {
-                let mut failed_any = false;
-                let mut case_print = String::new();
-                for case in cases {
-                    if !case.passed() {
-                        failed_any = true;
-                    }
-                    let result_print = match case.run_result {
-                        RunResult::Completed(cr) => format!("{}\n", cr),
-                        RunResult::RuntimeError(stderr, stdout) => {
-                            let mut out = stderr.clone();
-                            if !stdout.is_empty() {
-                                out.push_str(&format!(
-                                    "\nBefore crashing, {} outputted:\n{}",
-                                    program_name, stdout
-                                ));
-                            }
-                            out
+    let program_name = problem_instance.program.name();
+    match problem_instance.result {
+        ProblemInstanceResult::Ran(cases) => {
+            let mut failed_any = false;
+            let mut case_print = String::new();
+            for case in cases {
+                if !case.passed() {
+                    failed_any = true;
+                }
+                let result_print = match case.run_result {
+                    RunResult::Completed(cr) => format!("{cr}\n"),
+                    RunResult::RuntimeError(stderr, stdout) => {
+                        let mut out = stderr.clone();
+                        if !stdout.is_empty() {
+                            out.push_str(&format!(
+                                "\nBefore crashing, {program_name} outputted:\n{stdout}"
+                            ));
                         }
-                    };
-                    case_print.push_str(&format!("{}\n", &case.case_name.yellow().bold()));
-                    case_print.push_str(&result_print);
-                }
-                println!("{}\n{}", program_name, case_print);
-
-                if should_submit && (!failed_any || force) {
-                    if let Err(e) = pi.program.submit(&problem.problem_name).await {
-                        eprintln!("{}", e);
+                        out
                     }
+                };
+                case_print.push_str(&format!("{}\n", &case.case_name.yellow().bold()));
+                case_print.push_str(&result_print);
+            }
+            println!("{program_name}\n{case_print}");
+
+            if should_submit && (!failed_any || force) {
+                if let Err(e) = problem_instance.program.submit(&problem.problem_name).await {
+                    eprintln!("{e}");
                 }
             }
-            ProblemInstanceResult::CompileError(compile_error) => {
-                eprintln!("{}", compile_error);
-            }
+        }
+        ProblemInstanceResult::CompileError(compile_error) => {
+            eprintln!("{compile_error}");
         }
     }
     info!("Print results");
@@ -546,7 +578,7 @@ fn check_problem_output(pio: &ProblemIO, out: &Output) -> RunResult {
     }
 }
 
-async fn run_problems<'a>(problem: &'a Problem, ios: &'a [ProblemIO]) -> Vec<ProblemInstance<'a>> {
+async fn run_problem<'a>(problem: &'a Problem, ios: &'a [ProblemIO]) -> ProblemInstance<'a> {
     async fn run_submission<'b>(program: &'b Program, ios: &'b [ProblemIO]) -> ProblemInstance<'b> {
         match &program.compiled { // Guard against programs that aren't ready to run
             Some(Err(compile_error)) => return ProblemInstance {
@@ -576,15 +608,7 @@ async fn run_problems<'a>(problem: &'a Problem, ios: &'a [ProblemIO]) -> Vec<Pro
         }
     }
 
-    let run_handles =
-        problem
-            .submissions
-            .iter()
-            .map(|program| run_submission(program, ios));
-
-    let run_results = join_all(run_handles).await;
-    info!("Finished running problems");
-    run_results
+    run_submission(&problem.submission, ios).await
 }
 
 #[cfg(test)]
@@ -596,7 +620,7 @@ mod test {
     fn complete_langs() {
         let langs = all::<Lang>();
         for lang in langs {
-            assert!(Lang::from_extension(&lang.extension()).unwrap() == lang);
+            assert_eq!(Lang::from_extension(lang.extension()).unwrap(), lang);
         }
     }
 }

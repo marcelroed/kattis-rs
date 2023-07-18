@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use std::io::{Error, ErrorKind};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 
 #[derive(Clone, Debug)]
 struct KattisConfig {
@@ -19,14 +19,13 @@ struct KattisConfig {
 }
 
 impl KattisConfig{
-    pub fn from_config(config: &HashMap<String, HashMap<String, Option<String>>>) -> Result<Self>{
-        let read_setting = |first, second| -> Option<String> {
-            let res = config.get(first)?.get(second)?;
-            Some(res.as_ref()?.clone())
+    pub fn from_config(mut config: HashMap<String, HashMap<String, Option<String>>>) -> Result<Self>{
+        let mut read_setting = |first, second| -> Option<String> {
+            config.get_mut(first)?.remove(second)?
         };
 
-        let read_setting_with_error = |first, second| -> Result<String>{
-            read_setting(first, second).ok_or_else(|| anyhow!("Failed to read {}.{} from .kattisrc", first, second).into())
+        let mut read_setting_with_error = |first, second| -> Result<String>{
+            read_setting(first, second).ok_or_else(|| anyhow!("Failed to read {}.{} from .kattisrc", first, second))
         };
 
         Ok(Self {
@@ -58,7 +57,7 @@ async fn get_config() -> Result<KattisConfig> {
         config_file.read_to_string(&mut config_string).await?;
         config_string = config_string.replace(": ", "=");
         let config = configparser::ini::Ini::new().read(config_string).expect("Failed to read config file.");
-        KattisConfig::from_config(&config)
+        KattisConfig::from_config(config)
     } else {
         rc.pop();
         Err(anyhow!(
@@ -147,8 +146,7 @@ pub async fn submit(
         println!(
             "{}\n",
             format!(
-                "Submitted {}. Opening submission in browser...",
-                &submission_filename
+                "Submitted {submission_filename}. Opening submission in browser...",
             )
             .as_str()
             .green()
@@ -156,6 +154,6 @@ pub async fn submit(
         open::that(format!("{}/{}", config.submissions_url, submission_id))?;
         Ok(())
     } else {
-        Err(anyhow!("Failed to read submission ID from submission response"))
+        bail!("Failed to read submission ID from submission response");
     }
 }
