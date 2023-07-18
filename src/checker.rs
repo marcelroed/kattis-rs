@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use futures::future::join;
 use futures::future::join_all;
 
@@ -5,7 +6,8 @@ use std::str::from_utf8;
 use tokio::process::{Child, Command};
 use tokio::spawn;
 
-use crate::fetch::{fetch_problem, ProblemIO};
+use crate::fetch;
+use crate::fetch::ProblemIO;
 use anyhow::{Result, anyhow, bail};
 use colored::Colorize;
 use futures::prelude::stream::*;
@@ -17,14 +19,18 @@ use std::fmt::Formatter;
 use std::path::PathBuf;
 use std::process::{Output, Stdio};
 
-use crate::compare::{compare, CompareResult};
+use crate::compare::{compare, ComparisonResult};
 use crate::submit::submit;
 use enum_iterator::{Sequence, all};
 use futures::executor::block_on;
-use itertools::any;
+use itertools::{any, Itertools};
 use tokio::io::AsyncReadExt;
 
-#[derive(Debug, Clone)]
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+use log::info; // Allow checking of signal status on unix-based systems
+
+#[derive(Debug)]
 pub struct Problem {
     pub problem_name: String,
     pub submissions: Vec<Program>,
@@ -59,7 +65,7 @@ pub async fn check_problems(problems: Vec<Problem>, force: bool) -> Vec<(Problem
         .map(|r| match r {
             Ok(pr) => pr,
             Err(e) => {
-                eprintln!("{}", e);
+                eprintln!("HERE {}", e);
                 panic!();
             }
         })
@@ -77,48 +83,52 @@ pub struct Program {
 impl Drop for Program {
     fn drop(&mut self) {
         if let (true, Some(path)) = (&self.lang.compiled(), &self.binary) {
-            std::fs::remove_file(path).unwrap_or_else(|_| eprintln!("[Warning] Failed to remove binary for {} at {:?}", self.name(), path));
+            std::fs::remove_file(path).unwrap_or_else(|_|
+                eprintln!("[Warning] Failed to remove binary for {} at {:?}", self.name(), path
+            ));
         }
     }
 }
 
 impl Program {
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> &str {
         self.source
             .file_name()
             .unwrap()
             .to_str()
             .unwrap()
-            .to_string()
     }
 
     pub fn from_problem_name(problem_name: &str) -> Result<Vec<Self>> {
-        Ok(find_source(problem_name)?
+        find_source(problem_name)
             .into_iter()
-            .filter_map(|path| match Self::new(path.clone()) {
-                Ok(program) => Some(program),
-                Err(e) => {
-                    eprintln!(
-                        "Failed when reading {}: {}",
-                        path.file_name().unwrap().to_str().unwrap(),
-                        e
-                    );
-                    None
+            .filter_map(|path| {
+                let program = Self::new(path);
+                match &program {
+                    Err(e) => {
+                        eprintln!("Failed to read matched program: {}", e);
+                        None
+                    },
+                    Ok(_) => Some(program)
                 }
             })
-            .collect())
+            .collect()
     }
 
     pub fn new(path: PathBuf) -> Result<Self> {
         Ok(Self {
             lang: {
-                if let Some(Some(Some(lang))) = path
-                    .extension()
-                    .map(|ext| ext.to_str().map(Lang::from_extension))
-                {
-                    lang
+                let extension = path.extension()
+                .and_then(OsStr::to_str)
+                .and_then(Lang::from_extension);
+                if let Some(ext) = extension {
+                    ext
                 } else {
-                    bail!("Filetype could not be read.");
+                    bail!("Failed to read {}, since the filetype {} is not supported.
+                    The supported filetypes are: {}",
+                        path.display(),
+                        path.extension().and_then(std::ffi::OsStr::to_str).unwrap_or("<no extension>"),
+                        all::<Lang>().map(|l| l.extension()).join(", "));
                 }
             },
             source: path,
@@ -129,10 +139,11 @@ impl Program {
 
     pub async fn compile(&mut self) -> Result<()> {
         if self.compiled.is_some() {
-            return Err(anyhow!("Already compiled!"));
+            bail!("Already compiled!");
         }
         match self.lang {
             Lang::Cpp => {
+                info!("Compiling {}", self.name());
                 let mut output_path = std::env::temp_dir();
                 output_path.push("kattis/");
                 output_path.push(format!(
@@ -150,15 +161,16 @@ impl Program {
                     .await
                     .expect("Couldn't compile C++ program. Make sure GNU g++ is installed and in path (this is the compiler that kattis uses).");
 
-                self.binary = Some(output_path.clone());
+                info!("Finished compiling {}", self.name());
                 if output.status.success() {
                     self.compiled = Some(Ok(()));
+                    self.binary = Some(output_path.clone());
                     Ok(())
                 } else {
                     let mut err = format!("{}\n", self.name());
                     err.push_str(&String::from_utf8(output.stderr).unwrap());
                     self.compiled = Some(Err(err));
-                    Err(anyhow!("Compile Error!"))
+                    bail!("Compile Error!")
                 }
             }
             Lang::Rust => {
@@ -180,9 +192,9 @@ impl Program {
                         "Couldn't compile Rust program. Make sure rustc is installed and in path.",
                     );
 
-                self.binary = Some(output_path.clone());
                 if output.status.success() {
                     self.compiled = Some(Ok(()));
+                    self.binary = Some(output_path.clone());
                     Ok(())
                 } else {
                     let mut err =
@@ -216,14 +228,16 @@ impl Program {
                     .spawn()?),
             }
         } else {
-            Err(anyhow!("Program not compiled"))
+            bail!("Program not compiled");
         }
     }
 
     async fn run_problem<'a>(&'a self, pio: &'a ProblemIO) -> Result<(&'a ProblemIO, Output)> {
+        info!("Running problem {}", self.name());
         match self.spawn_process(std::fs::File::open(&pio.input)?) {
             Ok(child) => {
-                let results = child.wait_with_output().await.unwrap();
+                let results = child.wait_with_output().await?;
+                info!("Finished running problem {}", self.name());
                 Ok((pio, results))
             }
             Err(e) => Err(e),
@@ -233,13 +247,13 @@ impl Program {
     pub fn run_problems<'a>(
         &'a self,
         ios: &'a [ProblemIO],
-    ) -> Result<impl Stream<Item = Result<(&ProblemIO, Output)>> + 'a> {
+    ) -> impl Stream<Item = Result<(&ProblemIO, Output)>> + 'a {
         let mut tasks = FuturesOrdered::new();
         for (_i, pio) in ios.iter().enumerate() {
             let task = self.run_problem(pio);
             tasks.push_back(task);
         }
-        Ok(tasks)
+        tasks
     }
 
     pub async fn to_string(&self) -> Result<String> {
@@ -283,13 +297,12 @@ impl Lang {
             Self::Python => false,
         }
     }
-    pub fn extension(&self) -> String {
+    pub const fn extension(&self) -> &'static str {
         match self {
             Self::Cpp => "cpp",
             Self::Rust => "rs",
             Self::Python => "py",
         }
-        .to_string()
     }
 
     pub fn from_extension(ext: &str) -> Option<Self> {
@@ -309,16 +322,16 @@ impl fmt::Display for Lang {
             f,
             "{}",
             match self {
-                Lang::Cpp => "C++",
-                Lang::Python => "Python 3",
-                Lang::Rust => "Rust",
+                Self::Cpp => "C++",
+                Self::Python => "Python 3",
+                Self::Rust => "Rust",
             }
         )
     }
 }
 
-pub fn find_source(problem_name: &str) -> Result<Vec<PathBuf>> {
-    let result = walkdir::WalkDir::new(".")
+pub fn find_source(problem_name: &str) -> Vec<PathBuf> {
+    walkdir::WalkDir::new(".")
         .max_depth(3)
         .into_iter()
         .filter_map(|f| {
@@ -334,8 +347,7 @@ pub fn find_source(problem_name: &str) -> Result<Vec<PathBuf>> {
             }
             None
         })
-        .collect();
-    Ok(result)
+        .collect()
 }
 
 pub fn find_newest_source() -> Result<String> {
@@ -372,11 +384,13 @@ pub fn find_newest_source() -> Result<String> {
     }
 }
 
-struct ProblemInstance {
-    program: Program,
+struct ProblemInstance<'a> {
+    program: &'a Program,
     result: ProblemInstanceResult,
 }
 
+/// The result of compiling and running a problem.
+/// Either it ran and we have a list of results, or it failed to compile
 enum ProblemInstanceResult {
     Ran(Vec<CaseRun>),
     CompileError(String),
@@ -391,13 +405,13 @@ impl CaseRun {
     pub const fn passed(&self) -> bool {
         match &self.run_result {
             RunResult::Completed(cr) => cr.failed.is_none(),
-            _ => false,
+            RunResult::RuntimeError(_, _) => false,
         }
     }
 }
 
 pub enum RunResult {
-    Completed(CompareResult),
+    Completed(ComparisonResult),
     RuntimeError(String, String), // Output from stderr, stdout
 }
 
@@ -405,11 +419,12 @@ lazy_static::lazy_static! {
     static ref SEGFAULT_RE: Regex = Regex::new(r"signal: (\d+)").unwrap();
 }
 
+
 /// Compiles, fetches, runs and compares problem
 async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
     let should_submit = problem.submit;
     // Fetch problem IO
-    let future_io = fetch_problem(&problem.problem_name);
+    let future_io = fetch::problem(&problem.problem_name);
 
     // Find source paths
     if problem.submissions.is_empty() {
@@ -423,7 +438,6 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
                 ". Make sure that the file exists with one of the supported extensions\n".red(),
                 all::<Lang>()
                     .map(|e| e.extension())
-                    .collect::<Vec<String>>()
                     .join(", ")
             )
             .red(),
@@ -437,7 +451,7 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
             problem
                 .submissions
                 .iter_mut()
-                .map(|p| async move { p.compile().await }),
+                .map(Program::compile),
         ),
         future_io,
     )
@@ -447,71 +461,9 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
 
     let io = &io?;
 
-    let run_handles =
-        problem
-            .submissions
-            .clone()
-            .into_iter()
-            .map(async move |program| -> ProblemInstance {
-                let instance_results = match &program.compiled {
-                    Some(Err(compile_error)) => {
-                        ProblemInstanceResult::CompileError(compile_error.clone())
-                    }
-                    Some(Ok(())) => {
-                        // Run program
-                        let mut result_stream = program.run_problems(io).unwrap();
-                        let mut results: Vec<CaseRun> = Vec::new();
-                        while let Some((pio, out)) = result_stream.try_next().await.unwrap() {
-                            results.push({
-                                let run_result = {
-                                    let segfaulted = {
-                                        let status = out.status.to_string();
-                                        let seg_opt = SEGFAULT_RE
-                                            .captures(&status)
-                                            .and_then(|cap| cap.get(1).map(|m| m.as_str() == "11"));
-                                        matches!(seg_opt, Some(true))
-                                    };
-                                    if out.status.success() && !segfaulted {
-                                        let output_string =
-                                            from_utf8(out.stdout.as_slice()).unwrap().to_owned();
-                                        let pio_output_string: String =
-                                            pio.get_output_string().unwrap();
-                                        let compare_result =
-                                            compare(&output_string, &pio_output_string);
-                                        RunResult::Completed(compare_result)
-                                    } else {
-                                        let runtime_error = if segfaulted {
-                                            "Segmentation fault\n".red().to_string()
-                                        } else {
-                                            from_utf8(out.stderr.as_slice()).unwrap().to_string()
-                                        };
+    let run_results = run_problems(problem, io).await;
 
-                                        let output_before_crash =
-                                            from_utf8(out.stdout.as_slice()).unwrap();
-                                        RunResult::RuntimeError(
-                                            runtime_error,
-                                            output_before_crash.to_owned(),
-                                        )
-                                    }
-                                };
-                                CaseRun {
-                                    case_name: pio.name.clone(),
-                                    run_result,
-                                }
-                            });
-                        }
-                        ProblemInstanceResult::Ran(results)
-                    }
-                    None => panic!(),
-                };
-                ProblemInstance {
-                    program,
-                    result: instance_results,
-                }
-            });
-
-    let run_results = join_all(run_handles).await;
-
+    info!("Printing results");
     println!("{}", &problem.problem_name.bold());
     for pi in run_results {
         let program_name = pi.program.name();
@@ -552,8 +504,87 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
             }
         }
     }
+    info!("Print results");
 
     Ok(())
+}
+
+fn check_problem_output(pio: &ProblemIO, out: &Output) -> RunResult {
+    #[cfg(unix)]
+    let segfaulted = matches!(&out.status.signal(), Some(11));
+
+    #[cfg(not(unix))]
+    let segfaulted = {
+        let status = out.status.to_string();
+        let seg_opt = SEGFAULT_RE
+            .captures(&status)
+            .and_then(|cap| cap.get(1).map(|m| m.as_str() == "11"));
+        matches!(seg_opt, Some(true))
+    };
+
+    if out.status.success() && !segfaulted {
+        let output_string =
+            from_utf8(out.stdout.as_slice()).unwrap().to_owned();
+        let pio_output_string: String =
+            pio.get_output_string().unwrap();
+        let compare_result =
+            compare(&output_string, &pio_output_string);
+        RunResult::Completed(compare_result)
+    } else {
+        let runtime_error = if segfaulted {
+            "Segmentation fault\n".red().to_string()
+        } else {
+            from_utf8(out.stderr.as_slice()).unwrap().to_string()
+        };
+
+        let output_before_crash =
+            from_utf8(out.stdout.as_slice()).unwrap();
+        RunResult::RuntimeError(
+            runtime_error,
+            output_before_crash.to_owned(),
+        )
+    }
+}
+
+async fn run_problems<'a>(problem: &'a Problem, ios: &'a [ProblemIO]) -> Vec<ProblemInstance<'a>> {
+    async fn run_submission<'b>(program: &'b Program, ios: &'b [ProblemIO]) -> ProblemInstance<'b> {
+        match &program.compiled { // Guard against programs that aren't ready to run
+            Some(Err(compile_error)) => return ProblemInstance {
+                program,
+                result: ProblemInstanceResult::CompileError(compile_error.clone())
+            },
+            None => panic!("Program was not attempted compiled (internal error, please report this)"),
+            Some(Ok(())) => {}, // Continue to run program
+        }
+
+        // Stream of results coming from the async functions that are completing
+        let mut result_stream = program.run_problems(ios);
+
+        let mut results: Vec<CaseRun> = Vec::new();
+        while let Some((pio, out)) = result_stream.try_next().await.unwrap() {
+            let run_result = check_problem_output(pio, &out);
+            results.push(CaseRun {
+                case_name: pio.name.clone(),
+                run_result,
+            });
+        }
+        info!("Starting to run problems");
+
+        ProblemInstance {
+            program,
+            result: ProblemInstanceResult::Ran(results)
+        }
+    }
+
+    let run_handles =
+        problem
+            .submissions
+            .iter()
+            .map(|program| run_submission(program, ios));
+
+    let run_results = join_all(run_handles).await;
+    info!("Finished running problems");
+    run_results
 }
 
 #[cfg(test)]
