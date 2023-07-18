@@ -3,6 +3,7 @@ use colored::{ColoredString, Colorize};
 use itertools::{EitherOrBoth, Itertools};
 
 use std::fmt::Formatter;
+use log::info;
 
 use regex::{Captures, Regex};
 
@@ -14,11 +15,11 @@ pub enum LineStatus {
     Overpresent(String),   // Line past output
 }
 
-pub struct CompareResult {
+pub struct ComparisonResult {
     pub failed: Option<Vec<LineStatus>>,
 }
 
-impl CompareResult {
+impl ComparisonResult {
     pub fn new(x: Vec<LineStatus>) -> Self {
         let failed = if x.iter().all(|x| matches!(x, LineStatus::Correct(_))) {
             None
@@ -30,58 +31,56 @@ impl CompareResult {
     }
 }
 
-impl std::fmt::Display for CompareResult {
+impl std::fmt::Display for ComparisonResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let output = match &self.failed {
-            Some(failures) => {
-                // Group into error blocks
-                let mut correction: Vec<ColoredString> = Vec::new();
-                let it = failures.iter();
+        let output = self.failed.as_ref().map_or_else(|| "Success".green().bold().to_string(),
+                                                      |failures| {
+            // Group into error blocks
+            let mut correction: Vec<ColoredString> = Vec::new();
+            let it = failures.iter();
 
-                // (error buffer, correction buffer)
-                let mut error_block_buf = (Vec::new(), Vec::new());
-                for inner in it {
-                    match inner {
-                        LineStatus::Wrong(wrong_line, correction) => {
-                            if wrong_line.is_empty() {
-                                error_block_buf.0.push(" ".on_red());
-                            } else {
-                                error_block_buf.0.push(wrong_line.red());
-                            }
-                            error_block_buf.1.push(correction.green());
-                        }
-                        LineStatus::Correct(correct_line) => {
-                            correction.append(&mut error_block_buf.0);
-                            correction.append(&mut error_block_buf.1);
-                            error_block_buf.0.clear();
-                            error_block_buf.1.clear();
-                            correction.push(correct_line.white());
-                        }
-                        LineStatus::Missing(missing_line) => {
+            // (error buffer, correction buffer)
+            let mut error_block_buf = (Vec::new(), Vec::new());
+            for inner in it {
+                match inner {
+                    LineStatus::Wrong(wrong_line, correction) => {
+                        if wrong_line.is_empty() {
                             error_block_buf.0.push(" ".on_red());
-                            error_block_buf.1.push(missing_line.green());
+                        } else {
+                            error_block_buf.0.push(wrong_line.red());
                         }
-                        LineStatus::Overpresent(overpresent_line) => {
-                            error_block_buf.0.push({
-                                if overpresent_line.is_empty() {
-                                    " ".on_red()
-                                } else {
-                                    overpresent_line.red()
-                                }
-                            });
-                        }
+                        error_block_buf.1.push(correction.green());
+                    }
+                    LineStatus::Correct(correct_line) => {
+                        correction.append(&mut error_block_buf.0);
+                        correction.append(&mut error_block_buf.1);
+                        error_block_buf.0.clear();
+                        error_block_buf.1.clear();
+                        correction.push(correct_line.white());
+                    }
+                    LineStatus::Missing(missing_line) => {
+                        error_block_buf.0.push(" ".on_red());
+                        error_block_buf.1.push(missing_line.green());
+                    }
+                    LineStatus::Overpresent(overpresent_line) => {
+                        error_block_buf.0.push({
+                            if overpresent_line.is_empty() {
+                                " ".on_red()
+                            } else {
+                                overpresent_line.red()
+                            }
+                        });
                     }
                 }
-                if !error_block_buf.0.is_empty() {
-                    correction.append(&mut error_block_buf.0);
-                    correction.append(&mut error_block_buf.1);
-                }
-
-                correction.into_iter().map(|cs| cs.to_string()).join("\n")
             }
-            None => "Success".green().bold().to_string(),
-        };
-        write!(f, "{}", output)
+            if !error_block_buf.0.is_empty() {
+                correction.append(&mut error_block_buf.0);
+                correction.append(&mut error_block_buf.1);
+            }
+
+            correction.into_iter().map(|cs| cs.to_string()).join("\n")
+        });
+        write!(f, "{output}")
     }
 }
 
@@ -118,26 +117,22 @@ fn compare_lines(text: &str, key: &str) -> LineStatus {
     }
 }
 
-pub fn compare(output: &str, key: &str) -> CompareResult {
-    
-    
+pub fn compare(output: &str, key: &str) -> ComparisonResult {
+    use EitherOrBoth::{Both, Left, Right};
 
+    info!("Starting comparison");
     let comparisons: Vec<_> = output.split('\n')
         .zip_longest(key.split('\n'))
-        .map(|eob| match eob {
-            EitherOrBoth::Both(l, r) => (Some(l), Some(r)),
-            EitherOrBoth::Left(l) => (Some(l), None),
-            EitherOrBoth::Right(r) => (None, Some(r)),
-        })
         .filter_map(|out_key| match out_key {
-            (Some(o), Some(k)) => Some(compare_lines(o, k)),
-            (None, Some(k)) if !k.is_empty() => Some(LineStatus::Missing(k.to_string())),
-            (Some(o), None) if !o.is_empty() => Some(LineStatus::Overpresent(o.to_string())),
+            Both(o, k) => Some(compare_lines(o, k)),
+            Right(k) if !k.is_empty() => Some(LineStatus::Missing(k.to_string())),
+            Left(o) if !o.is_empty() => Some(LineStatus::Overpresent(o.to_string())),
             _ => None,
         })
         .collect();
 
-    CompareResult::new(comparisons)
+    info!("Finished comparison");
+    ComparisonResult::new(comparisons)
 }
 
 #[cfg(test)]
