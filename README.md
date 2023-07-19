@@ -2,8 +2,7 @@
 A problem tester for problems on www.open.kattis.com.
 
 ## Usage
-<pre>
-<b><u>Usage:</u> kattis</b> [OPTIONS] [PROBLEM]...
+<pre><code><b><u>Usage:</u> kattis</b> [OPTIONS] [PROBLEM]...
 
 <b><u>Arguments</u></b>:
   [PROBLEM]...  Paths of files to test or no arguments.
@@ -16,11 +15,11 @@ Options:
   <b>-r, --recurse</b> &lt;DEPTH&gt;  Number of directory levels to recurse into when searching for problem solutions. [default: 1]
   <b>-h, --help</b>             Print help
   <b>-V, --version</b>          Print version
-</pre>
+</code></pre>
 
 The simplest use case for the CLI is when you want to test and submit the latest edited file in a directory:
 ```sh
-kattis -s
+$ kattis -s
 ```
 This command will find the latest edited valid file in the current directory and test it using input and output from www.open.kattis.com, then submit it if it passes.
 
