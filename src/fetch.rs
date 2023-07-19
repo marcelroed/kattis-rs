@@ -4,18 +4,18 @@ use std::collections::HashMap;
 use futures::io::SeekFrom;
 use itertools::Itertools;
 use log::info;
+use std::convert::Into;
 use std::env::temp_dir;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
 use tempfile::TempPath;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, ErrorKind};
-use std::convert::Into;
-use std::ffi::OsStr;
 
 pub fn initialize_temp_dir() -> Result<()> {
-    let mut tmp_dir = std::env::temp_dir();
+    let mut tmp_dir = temp_dir();
     tmp_dir.push("kattis/problem_files/");
     fs::create_dir_all(tmp_dir).map_err(Into::into)
 }
@@ -53,7 +53,7 @@ fn remove_suffix(s: &str, p: Vec<&str>) -> String {
         if let Some(stripped) = s.strip_suffix(pat) {
             return stripped.into();
         }
-}
+    }
     s.into()
 }
 
@@ -75,9 +75,9 @@ pub async fn problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
                     .open(&problem_path)
                     .await?;
 
-                let tmp = reqwest::get(
-                    format!("https://open.kattis.com/problems/{problem_name}/file/statement/samples.zip")
-                )
+                let tmp = reqwest::get(format!(
+                    "https://open.kattis.com/problems/{problem_name}/file/statement/samples.zip"
+                ))
                 .await?
                 .bytes()
                 .await?;
@@ -126,8 +126,10 @@ pub async fn problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
         .into_iter()
         .map(|(name, io)| ProblemIO::new(name, io))
         .sorted_by(|a, b| {
-            Ord::cmp(a.as_ref().map(|x| x.name.as_str()).unwrap_or(""),
-                     b.as_ref().map(|x| x.name.as_str()).unwrap_or(""))
+            Ord::cmp(
+                a.as_ref().map(|x| x.name.as_str()).unwrap_or(""),
+                b.as_ref().map(|x| x.name.as_str()).unwrap_or(""),
+            )
         })
         .collect()
 }

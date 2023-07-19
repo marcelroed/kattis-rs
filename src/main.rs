@@ -1,13 +1,16 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 
-use std::path::Path;
 use anyhow::{Context, Result};
-use std::sync::OnceLock;
-use clap::{arg, crate_version, Command, ArgAction};
 use clap::builder::NonEmptyStringValueParser;
-use log::info;
+use clap::parser::ValueSource;
+use clap::{arg, crate_version, ArgAction, Command, ValueHint};
+use colored::Colorize;
+use log::{info, warn};
+use std::path::Path;
+use std::sync::OnceLock;
 
 use crate::checker::{find_source_from_path, Problem, ProblemSource};
+use crate::submit::SubmissionViewer;
 
 mod checker;
 mod compare;
@@ -16,20 +19,10 @@ mod submit;
 
 pub static RECURSE_DEPTH: OnceLock<usize> = OnceLock::new();
 
-/// # Panics
-/// Panics if something goes wrong.
-#[tokio::main]
-pub async fn main(){
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "warn");
-    }
-    pretty_env_logger::init();
-    // Create folder in tmp if it doesn't already exist
-    if let Err(e) = fetch::initialize_temp_dir() {
-        eprintln!("{e}");
-    }
 
-    let mut app = Command::new("Kattis Tester")
+#[allow(clippy::cognitive_complexity)]
+fn build_cli() -> Command {
+    Command::new("Kattis Tester")
         .version(crate_version!())
         .author("Marcel Rød")
         .about("Tests and submits Kattis competitive programming problems.")
@@ -44,6 +37,7 @@ pub async fn main(){
                 )
                 .required(false)
                 .value_parser(NonEmptyStringValueParser::new())
+                .value_hint(ValueHint::FilePath)
                 .value_name("PROBLEM"))
         .arg(
             arg!(--submit)
@@ -71,21 +65,64 @@ pub async fn main(){
                 }))
                 .default_value("1")
                 .action(ArgAction::Set)
-        );
+        )
+        .arg(
+            arg!(--"submission-viewer")
+                .help("Viewer to use for submission.")
+                .required(false)
+                .default_value("cli")
+                // .requires("submit")  // Warn instead of disallowing
+                .action(ArgAction::Set)
+                // .value_hint(ValueHint)
+                .value_parser(submit::SubmissionViewerParser)
+        )
+}
+
+/// # Panics
+/// Panics if something goes wrong.
+#[tokio::main]
+pub async fn main() {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "warn");
+    }
+    pretty_env_logger::init();
+    // Create folder in tmp if it doesn't already exist
+    if let Err(e) = fetch::initialize_temp_dir() {
+        eprintln!("{e}");
+    }
+
+    let mut app = build_cli();
+
     let matches = app.get_matches_mut();
     let force_flag: bool = matches.get_one("force").copied().unwrap_or(false);
     let submit_flag: bool = matches.get_one("submit").copied().unwrap_or(false);
     let recurse_depth: usize = matches.get_one("recurse").copied().unwrap_or(0);
-    unsafe {RECURSE_DEPTH.set(recurse_depth).unwrap_unchecked()};
+    let submission_viewer: SubmissionViewer =
+        matches.get_one("submission-viewer").copied().unwrap();
+
+    if matches!(
+        matches.value_source("submission-viewer"),
+        Some(ValueSource::CommandLine)
+    ) && !submit_flag
+    {
+        warn!(
+            "{0} flag is set but {1} is not. Ignoring {0}.",
+            "--submission-viewer".bold(),
+            "--submit".bold()
+        );
+    }
+
+    RECURSE_DEPTH.set(recurse_depth).unwrap();
     info!("Recursing {} levels into directories.", recurse_depth);
 
     let problem_args: Vec<&str> = matches
-        .get_many::<String>("problems").unwrap_or_default()
+        .get_many::<String>("problems")
+        .unwrap_or_default()
         .map(String::as_str)
         .collect();
 
     let problem_sources: Vec<ProblemSource> = {
-        if problem_args.is_empty() {  // Look for newest source file
+        if problem_args.is_empty() { // Look for newest source file
             match checker::find_newest_source() {
                 Ok(problem_source) => vec![problem_source],
                 Err(e) => {
@@ -103,19 +140,21 @@ pub async fn main(){
             problem_args.into_iter()
                 .map(Path::new)
                 .map(find_source_from_path)
-                .collect::<Result<Vec<_>>>().context("Failed to find source files.").unwrap()
+                .collect::<Result<Vec<_>>>()
+                .context("Failed to find source files.")
+                .unwrap()
         }
     };
 
     let problems: Vec<Problem> = problem_sources
         .into_iter()
         .map(Problem::new)
-        .map(|problem| {
-            problem.set_submit(submit_flag)
-        })
+        .map(|problem| problem.set_submit(submit_flag))
         .collect();
 
-    checker::check_problems(problems, force_flag).await.into_iter()
+    checker::check_problems(problems, force_flag, submission_viewer)
+        .await
+        .into_iter()
         .for_each(|(problem, res)| {
             if let Err(e) = res {
                 eprintln!("Failed to check problem {}: {e}", problem.problem_name);

@@ -5,9 +5,9 @@ use std::str::from_utf8;
 use tokio::process::{Child, Command};
 use tokio::spawn;
 
-use crate::{fetch, RECURSE_DEPTH};
 use crate::fetch::ProblemIO;
-use anyhow::{Result, anyhow, bail};
+use crate::{fetch, RECURSE_DEPTH};
+use anyhow::{anyhow, bail, Result};
 use colored::Colorize;
 use futures::prelude::stream::*;
 use futures::stream::TryStreamExt;
@@ -19,18 +19,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 
 use crate::compare::{compare, ComparisonResult};
-use crate::submit::submit;
-use enum_iterator::{Sequence, all};
+use crate::submit::{submit, SubmissionViewer};
+use enum_iterator::{all, Sequence};
 use futures::executor::block_on;
+use guard::guard;
 use itertools::Itertools;
 use tokio::io::AsyncReadExt;
-use guard::guard;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
-use std::time::SystemTime;
 use log::info;
+use std::time::SystemTime;
 use walkdir::DirEntry;
 
 #[derive(Debug)]
@@ -54,10 +54,14 @@ impl Problem {
     }
 }
 
-pub async fn check_problems(problems: Vec<Problem>, force: bool) -> Vec<(Problem, Result<()>)> {
+pub async fn check_problems(
+    problems: Vec<Problem>,
+    force: bool,
+    submission_viewer: SubmissionViewer,
+) -> Vec<(Problem, Result<()>)> {
     let handles = problems.into_iter().map(|mut prob| {
         spawn(async move {
-            let checked = check_problem(&mut prob, force).await;
+            let checked = check_problem(&mut prob, force, submission_viewer).await;
             (prob, checked)
         })
     });
@@ -68,7 +72,7 @@ pub async fn check_problems(problems: Vec<Problem>, force: bool) -> Vec<(Problem
         .map(|r| match r {
             Ok(pr) => pr,
             Err(e) => {
-                eprintln!("HERE {e}");
+                eprintln!("{e}");
                 panic!();
             }
         })
@@ -86,20 +90,20 @@ pub struct Program {
 impl Drop for Program {
     fn drop(&mut self) {
         if let (true, Some(path)) = (&self.lang.compiled(), &self.binary) {
-            std::fs::remove_file(path).unwrap_or_else(|_|
-                eprintln!("[Warning] Failed to remove binary for {} at {:?}", self.name(), path
-            ));
+            std::fs::remove_file(path).unwrap_or_else(|_| {
+                eprintln!(
+                    "[Warning] Failed to remove binary for {} at {:?}",
+                    self.name(),
+                    path
+                );
+            });
         }
     }
 }
 
 impl Program {
     pub fn name(&self) -> &str {
-        self.source
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
+        self.source.file_name().unwrap().to_str().unwrap()
     }
 
     #[allow(clippy::missing_const_for_fn)]
@@ -201,7 +205,7 @@ impl Program {
                     Err(anyhow!("Compile Error!"))
                 }
             }
-            Lang::Python => {
+            Lang::Python | Lang::Bash => {
                 self.binary = Some(self.source.clone());
                 self.compiled = Some(Ok(()));
                 Ok(())
@@ -218,6 +222,12 @@ impl Program {
                     .stderr(Stdio::piped())
                     .spawn()?),
                 Lang::Python => Ok(Command::new("python")
+                    .arg(bin)
+                    .stdin(Stdio::from(stdin_file))
+                    .stderr(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()?),
+                Lang::Bash => Ok(Command::new("bash")
                     .arg(bin)
                     .stdin(Stdio::from(stdin_file))
                     .stderr(Stdio::piped())
@@ -264,7 +274,11 @@ impl Program {
         Ok(output)
     }
 
-    pub async fn submit(&self, problem_name: &str) -> Result<()> {
+    pub async fn submit(
+        &self,
+        problem_name: &str,
+        submission_viewer: SubmissionViewer,
+    ) -> Result<()> {
         submit(
             format!("{}", &self.lang),
             problem_name.to_string(),
@@ -275,6 +289,7 @@ impl Program {
                 .unwrap()
                 .to_string(),
             self.to_string().await.unwrap(),
+            submission_viewer,
         )
         .await
     }
@@ -283,15 +298,16 @@ impl Program {
 #[derive(Sequence, PartialEq, Clone, Eq, Debug)]
 pub enum Lang {
     Cpp,
-    Python,
     Rust,
+    Python,
+    Bash,
 }
 
 impl Lang {
     pub const fn compiled(&self) -> bool {
         match self {
             Self::Cpp | Self::Rust => true,
-            Self::Python => false,
+            Self::Python | Self::Bash => false,
         }
     }
     pub const fn extension(&self) -> &'static str {
@@ -299,6 +315,7 @@ impl Lang {
             Self::Cpp => "cpp",
             Self::Rust => "rs",
             Self::Python => "py",
+            Self::Bash => "sh",
         }
     }
 
@@ -307,6 +324,7 @@ impl Lang {
             "cpp" => Some(Self::Cpp),
             "py" => Some(Self::Python),
             "rs" => Some(Self::Rust),
+            "sh" => Some(Self::Bash),
             _ => None,
         }
     }
@@ -326,6 +344,7 @@ impl fmt::Display for Lang {
                 Self::Cpp => "C++",
                 Self::Python => "Python 3",
                 Self::Rust => "Rust",
+                Self::Bash => "Bash",
             }
         )
     }
@@ -355,12 +374,17 @@ pub fn find_source_from_path(path: &Path) -> Result<ProblemSource> {
     if !path.is_file() {
         bail!("Path {path:?} is not a file");
     }
-    let extension = path.extension()
+    let extension = path
+        .extension()
         .ok_or_else(|| anyhow!("Path {path:?} has no extension"))?;
-    let lang = Lang::from_extension(extension.to_string_lossy())
-        .ok_or_else(|| anyhow!("Extension {extension:?} from path {path:?} is not supported. Expected one of {}",
-            all::<Lang>().map(|l| l.extension()).join(", ")))?;
-    let problem_name = path.file_stem()
+    let lang = Lang::from_extension(extension.to_string_lossy()).ok_or_else(|| {
+        anyhow!(
+            "Extension {extension:?} from path {path:?} is not supported. Expected one of {}",
+            all::<Lang>().map(|l| l.extension()).join(", ")
+        )
+    })?;
+    let problem_name = path
+        .file_stem()
         .ok_or_else(|| anyhow!("Problem name not found in path {path:?}"))?;
 
     if block_on(fetch::problem_exists(&problem_name.to_string_lossy()))? {
@@ -383,12 +407,16 @@ pub struct ProblemSource {
 pub fn find_newest_source() -> Result<ProblemSource> {
     let problem_path = walkdir::WalkDir::new(".")
         .max_depth(*RECURSE_DEPTH.get().unwrap())
-        .into_iter().take(100_000)  // Look through at most 100_000 files
-        .filter_map(|f| -> Option<DirEntry> {  // Filter out files that don't have the right extension
+        .into_iter()
+        .take(100_000) // Look through at most 100_000 files
+        .filter_map(|f| -> Option<DirEntry> {
+            // Filter out files that don't have the right extension
             let de = f.ok()?;
 
             let file_path = de.path();
-            if !file_path.is_file() {return None;}; // Skip directories
+            if !file_path.is_file() {
+                return None;
+            }; // Skip directories
             let file_extension = file_path.extension()?.to_string_lossy();
             if Lang::is_valid_extension(&file_extension) {
                 Some(de)
@@ -400,10 +428,9 @@ pub fn find_newest_source() -> Result<ProblemSource> {
             de.metadata()
                 .map_err(|e| anyhow!("Failed to get metadata from file with error: {e}"))
                 .and_then(|x| x.modified().map_err(Into::into))
-                .unwrap_or(SystemTime::UNIX_EPOCH)
-        ).ok_or_else(|| anyhow!("No source files found."))?
-        .into_path();  // Get the path of the file
-
+                .unwrap_or(SystemTime::UNIX_EPOCH))
+        .ok_or_else(|| anyhow!("No source files found."))?
+        .into_path(); // Get the path of the file
 
     guard!(let Some(file_stem) = problem_path.file_stem() else {
         bail!("No file stem found for file {problem_path:?}.");
@@ -412,11 +439,13 @@ pub fn find_newest_source() -> Result<ProblemSource> {
     let problem_name = file_stem.to_string_lossy();
 
     if block_on(fetch::problem_exists(&problem_name))? {
-        let extension = problem_path.extension()
+        let extension = problem_path
+            .extension()
             .ok_or_else(|| anyhow!("Path {problem_path:?} has no extension"))?;
         Ok(ProblemSource {
             problem_name: problem_name.to_string(),
-            lang: Lang::from_extension(extension.to_string_lossy()).ok_or_else(|| anyhow!("Unrecognized extension"))?,
+            lang: Lang::from_extension(extension.to_string_lossy())
+                .ok_or_else(|| anyhow!("Unrecognized extension"))?,
             path: problem_path,
         })
     } else {
@@ -462,9 +491,12 @@ lazy_static::lazy_static! {
     static ref SEGFAULT_RE: Regex = Regex::new(r"signal: (\d+)").unwrap();
 }
 
-
 /// Compiles, fetches, runs and compares problem
-async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
+async fn check_problem(
+    problem: &mut Problem,
+    force: bool,
+    submission_viewer: SubmissionViewer,
+) -> Result<()> {
     let should_submit = problem.submit;
     // Fetch problem IO
     let future_io = fetch::problem(&problem.problem_name);
@@ -527,7 +559,11 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
             println!("{program_name}\n{case_print}");
 
             if should_submit && (!failed_any || force) {
-                if let Err(e) = problem_instance.program.submit(&problem.problem_name).await {
+                if let Err(e) = problem_instance
+                    .program
+                    .submit(&problem.problem_name, submission_viewer)
+                    .await
+                {
                     eprintln!("{}{e}", "Error:\n".bold().red());
                 }
             }
@@ -555,12 +591,9 @@ fn check_problem_output(pio: &ProblemIO, out: &Output) -> RunResult {
     };
 
     if out.status.success() && !segfaulted {
-        let output_string =
-            from_utf8(out.stdout.as_slice()).unwrap().to_owned();
-        let pio_output_string: String =
-            pio.get_output_string().unwrap();
-        let compare_result =
-            compare(&output_string, &pio_output_string);
+        let output_string = from_utf8(out.stdout.as_slice()).unwrap().to_owned();
+        let pio_output_string: String = pio.get_output_string().unwrap();
+        let compare_result = compare(&output_string, &pio_output_string);
         RunResult::Completed(compare_result)
     } else {
         let runtime_error = if segfaulted {
@@ -569,24 +602,25 @@ fn check_problem_output(pio: &ProblemIO, out: &Output) -> RunResult {
             from_utf8(out.stderr.as_slice()).unwrap().to_string()
         };
 
-        let output_before_crash =
-            from_utf8(out.stdout.as_slice()).unwrap();
-        RunResult::RuntimeError(
-            runtime_error,
-            output_before_crash.to_owned(),
-        )
+        let output_before_crash = from_utf8(out.stdout.as_slice()).unwrap();
+        RunResult::RuntimeError(runtime_error, output_before_crash.to_owned())
     }
 }
 
 async fn run_problem<'a>(problem: &'a Problem, ios: &'a [ProblemIO]) -> ProblemInstance<'a> {
     async fn run_submission<'b>(program: &'b Program, ios: &'b [ProblemIO]) -> ProblemInstance<'b> {
-        match &program.compiled { // Guard against programs that aren't ready to run
-            Some(Err(compile_error)) => return ProblemInstance {
-                program,
-                result: ProblemInstanceResult::CompileError(compile_error.clone())
-            },
-            None => panic!("Program was not attempted compiled (internal error, please report this)"),
-            Some(Ok(())) => {}, // Continue to run program
+        match &program.compiled {
+            // Guard against programs that aren't ready to run
+            Some(Err(compile_error)) => {
+                return ProblemInstance {
+                    program,
+                    result: ProblemInstanceResult::CompileError(compile_error.clone()),
+                }
+            }
+            None => {
+                panic!("Program was not attempted compiled (internal error, please report this)")
+            }
+            Some(Ok(())) => {} // Continue to run program
         }
 
         // Stream of results coming from the async functions that are completing
@@ -604,7 +638,7 @@ async fn run_problem<'a>(problem: &'a Problem, ios: &'a [ProblemIO]) -> ProblemI
 
         ProblemInstance {
             program,
-            result: ProblemInstanceResult::Ran(results)
+            result: ProblemInstanceResult::Ran(results),
         }
     }
 

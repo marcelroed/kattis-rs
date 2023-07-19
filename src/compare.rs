@@ -2,8 +2,8 @@ use colored::{ColoredString, Colorize};
 
 use itertools::{EitherOrBoth, Itertools};
 
-use std::fmt::Formatter;
 use log::info;
+use std::fmt::Formatter;
 
 use regex::{Captures, Regex};
 
@@ -33,53 +33,55 @@ impl ComparisonResult {
 
 impl std::fmt::Display for ComparisonResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let output = self.failed.as_ref().map_or_else(|| "Success".green().bold().to_string(),
-                                                      |failures| {
-            // Group into error blocks
-            let mut correction: Vec<ColoredString> = Vec::new();
-            let it = failures.iter();
+        let output = self.failed.as_ref().map_or_else(
+            || "Success".green().bold().to_string(),
+            |failures| {
+                // Group into error blocks
+                let mut correction: Vec<ColoredString> = Vec::new();
+                let it = failures.iter();
 
-            // (error buffer, correction buffer)
-            let mut error_block_buf = (Vec::new(), Vec::new());
-            for inner in it {
-                match inner {
-                    LineStatus::Wrong(wrong_line, correction) => {
-                        if wrong_line.is_empty() {
-                            error_block_buf.0.push(" ".on_red());
-                        } else {
-                            error_block_buf.0.push(wrong_line.red());
-                        }
-                        error_block_buf.1.push(correction.green());
-                    }
-                    LineStatus::Correct(correct_line) => {
-                        correction.append(&mut error_block_buf.0);
-                        correction.append(&mut error_block_buf.1);
-                        error_block_buf.0.clear();
-                        error_block_buf.1.clear();
-                        correction.push(correct_line.white());
-                    }
-                    LineStatus::Missing(missing_line) => {
-                        error_block_buf.0.push(" ".on_red());
-                        error_block_buf.1.push(missing_line.green());
-                    }
-                    LineStatus::Overpresent(overpresent_line) => {
-                        error_block_buf.0.push({
-                            if overpresent_line.is_empty() {
-                                " ".on_red()
+                // (error buffer, correction buffer)
+                let mut error_block_buf = (Vec::new(), Vec::new());
+                for inner in it {
+                    match inner {
+                        LineStatus::Wrong(wrong_line, correction) => {
+                            if wrong_line.is_empty() {
+                                error_block_buf.0.push(" ".on_red());
                             } else {
-                                overpresent_line.red()
+                                error_block_buf.0.push(wrong_line.red());
                             }
-                        });
+                            error_block_buf.1.push(correction.green());
+                        }
+                        LineStatus::Correct(correct_line) => {
+                            correction.append(&mut error_block_buf.0);
+                            correction.append(&mut error_block_buf.1);
+                            error_block_buf.0.clear();
+                            error_block_buf.1.clear();
+                            correction.push(correct_line.white());
+                        }
+                        LineStatus::Missing(missing_line) => {
+                            error_block_buf.0.push(" ".on_red());
+                            error_block_buf.1.push(missing_line.green());
+                        }
+                        LineStatus::Overpresent(overpresent_line) => {
+                            error_block_buf.0.push({
+                                if overpresent_line.is_empty() {
+                                    " ".on_red()
+                                } else {
+                                    overpresent_line.red()
+                                }
+                            });
+                        }
                     }
                 }
-            }
-            if !error_block_buf.0.is_empty() {
-                correction.append(&mut error_block_buf.0);
-                correction.append(&mut error_block_buf.1);
-            }
+                if !error_block_buf.0.is_empty() {
+                    correction.append(&mut error_block_buf.0);
+                    correction.append(&mut error_block_buf.1);
+                }
 
-            correction.into_iter().map(|cs| cs.to_string()).join("\n")
-        });
+                correction.into_iter().map(|cs| cs.to_string()).join("\n")
+            },
+        );
         write!(f, "{output}")
     }
 }
@@ -121,7 +123,8 @@ pub fn compare(output: &str, key: &str) -> ComparisonResult {
     use EitherOrBoth::{Both, Left, Right};
 
     info!("Starting comparison");
-    let comparisons: Vec<_> = output.split('\n')
+    let comparisons: Vec<_> = output
+        .split('\n')
         .zip_longest(key.split('\n'))
         .filter_map(|out_key| match out_key {
             Both(o, k) => Some(compare_lines(o, k)),
