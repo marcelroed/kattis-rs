@@ -1,5 +1,8 @@
-# kattis-rs
-A problem tester for problems on www.open.kattis.com.
+# kattis.rs
+A simple automated problem tester for problems on the [Kattis Problem Archive](open.kattis.com).
+
+![crates.io](https://img.shields.io/crates/v/kattis-rs.svg)
+![crates.io](https://img.shields.io/crates/d/kattis-rs.svg)
 
 ## Usage
 <pre><code><b><u>Usage:</u> kattis</b> [OPTIONS] [PROBLEM]...
