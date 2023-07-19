@@ -43,10 +43,7 @@ lazy_static::lazy_static! {
 }
 
 fn display_link(url: &str) -> String {
-    format!(
-        "\u{1b}]8;;{}\u{1b}\\{}\u{1b}]8;;\u{1b}\\",
-        url, url
-    )
+    format!("\u{1b}]8;;{url}\u{1b}\\{url}\u{1b}]8;;\u{1b}\\")
 }
 
 async fn get_config() -> Result<KattisConfig> {
