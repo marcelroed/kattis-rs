@@ -8,7 +8,7 @@ repository = "https://github.com/marcelroed/kattis-rs"
 description = "Competitive programming checker for open.kattis.com"
 license = "MIT"
 categories = ["utility"]
-keywords = ["kattis", "competitive-programming", "checker", "kattis-rs"]
+keywords = ["kattis", "competitive", "programming", "checker", "kattis-rs"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
