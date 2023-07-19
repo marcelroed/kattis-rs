@@ -2,39 +2,38 @@
 A problem tester for problems on www.open.kattis.com.
 
 ## Usage
-```sh
-USAGE:
-    kattis [FLAGS] [OPTIONS] [--] [PROBLEM]...
+<pre>
+<b><u>Usage:</u> kattis</b> [OPTIONS] [PROBLEM]...
 
-ARGS:
-    <PROBLEM>...    Names of the problems to test.The format needs to be {problem} in
-                    open.kattis.com/problems/{problem}. If left empty, the problem name will be
-                    the name of the last edited source file. Make sure that source files use the
-                    file name stem {problem}.
+<b><u>Arguments</u></b>:
+  [PROBLEM]...  Paths of files to test or no arguments.
+                Filenames should be of the format {problem}.{ext} where {problem} can be found from the url of the kattis problem at open.kattis.com/problems/{problem}.
+                If left empty, the problem to run will be inferred by looking for the latest edited valid source file in the working directory.
 
-FLAGS:
-    -f, --force      Force submission even if submitted problems don't pass local tests.
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+Options:
+  <b>-s, --submit</b>           If flag is set, all successful problems will be submitted.
+  <b>-f, --force</b>            Force submission even if submitted problems don't pass local tests.
+  <b>-r, --recurse</b> &lt;DEPTH&gt;  Number of directory levels to recurse into when searching for problem solutions. [default: 1]
+  <b>-h, --help</b>             Print help
+  <b>-V, --version</b>          Print version
+</pre>
 
-OPTIONS:
-    -s, --submit <SUBMIT_PROBLEM>...    Problems after this flag are submitted if they pass testing.
-                                        If no problems are listed, use problems from regular args.
-```
-
-The simplest use case for the CLI is when you want to test the latest edited file in a directory:
+The simplest use case for the CLI is when you want to test and submit the latest edited file in a directory:
 ```sh
 kattis -s
 ```
 This command will find the latest edited valid file in the current directory and test it using input and output from www.open.kattis.com, then submit it if it passes.
 
 ## Installation
-Can be installed from www.crates.io using
+### Using Cargo
+First install the Rust toolchain using [rustup](https://rustup.rs/).
+This will also install Cargo.
+
 ```sh
-cargo install kattis
+$ cargo install kattis-rs
 ```
 
-Can be easily installed on Arch-based distros from the AUR using an AUR manager such as `yay` or `yaourt`.
-```sh
-yay -S kattis
-```
+The installation path will show up after installation.
+Add it to your `PATH` by adding the cargo binary directory to `PATH` (usually `$HOME/.cargo/bin`).
+
+`kattis-rs` is only tested on macOS and Linux, but should work on Windows.
