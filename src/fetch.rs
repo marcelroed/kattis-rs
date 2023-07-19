@@ -12,6 +12,7 @@ use tempfile::TempPath;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, ErrorKind};
 use std::convert::Into;
+use std::ffi::OsStr;
 
 pub fn initialize_temp_dir() -> Result<()> {
     let mut tmp_dir = std::env::temp_dir();
@@ -66,6 +67,7 @@ pub async fn problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
         Ok(f) => f,
         Err(e) => match e.kind() {
             ErrorKind::NotFound => {
+                log::warn!("Downloading problem files for {problem_name} from open.kattis.com...");
                 let mut file = OpenOptions::new()
                     .write(true)
                     .read(true)
@@ -74,10 +76,7 @@ pub async fn problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
                     .await?;
 
                 let tmp = reqwest::get(
-                    format!(
-                        "https://open.kattis.com/problems/{problem_name}/file/statement/samples.zip",
-                    )
-                    .as_str(),
+                    format!("https://open.kattis.com/problems/{problem_name}/file/statement/samples.zip")
                 )
                 .await?
                 .bytes()
@@ -134,22 +133,23 @@ pub async fn problem(problem_name: &str) -> Result<Vec<ProblemIO>> {
 }
 
 pub async fn problem_exists(problem_name: &str) -> Result<bool> {
+    use walkdir::DirEntry;
     let mut problem_path = temp_dir();
     problem_path.push("kattis/problem_files/");
     info!("Checking if problem exists locally at {problem_path:?}");
 
-    let problem_names: Vec<_> = walkdir::WalkDir::new(problem_path)
+    let found_locally = walkdir::WalkDir::new(problem_path)
         .max_depth(1)
         .into_iter()
-        .map(|f| {
+        .take(100_000)
+        .any(|f| {
             // Strip the .zip off
-            let pb = f.unwrap().into_path();
-            let s = pb.file_stem().unwrap().to_str().unwrap();
-            s.to_string()
-        })
-        .collect();
+            let pb: Option<&Path> = f.as_ref().ok().map(DirEntry::path);
+            let s = pb.and_then(Path::file_stem).map(OsStr::to_string_lossy);
+            s.map_or(false, |cow| cow == problem_name)
+        });
 
-    if problem_names.iter().any(|pn| pn == problem_name) {
+    if found_locally {
         return Ok(true);
     }
 
