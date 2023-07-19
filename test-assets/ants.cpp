@@ -18,14 +18,16 @@ int max(int a, int b){
 }
 
 int main(){
+  // Segfault immediately
+  vector<int> arr;
+  cout << arr[101];
+
   int N;
   cin >> N;
   for(int i = 0; i < N; i++){
       int l, n;
       vector<int> ants;
 
-      // Meant to segfault
-      cout << ants[1000];
       cin >> l >> n;
       for (int j = 0; j < n; j++){
         int pos;
