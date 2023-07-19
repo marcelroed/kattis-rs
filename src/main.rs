@@ -20,6 +20,9 @@ pub static RECURSE_DEPTH: OnceLock<usize> = OnceLock::new();
 /// Panics if something goes wrong.
 #[tokio::main]
 pub async fn main(){
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "warn");
+    }
     pretty_env_logger::init();
     // Create folder in tmp if it doesn't already exist
     if let Err(e) = fetch::initialize_temp_dir() {
@@ -91,7 +94,7 @@ pub async fn main(){
                         \nEncountered error: {e}\n\
                         Perhaps you wanted the regular usage?"
                     );
-                    eprintln!("{}", app.render_usage());
+                    eprintln!("{}", app.render_help());
                     std::process::exit(1);
                 }
             }
