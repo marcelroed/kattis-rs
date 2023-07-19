@@ -528,7 +528,7 @@ async fn check_problem(problem: &mut Problem, force: bool) -> Result<()> {
 
             if should_submit && (!failed_any || force) {
                 if let Err(e) = problem_instance.program.submit(&problem.problem_name).await {
-                    eprintln!("{e}");
+                    eprintln!("{}{e}", "Error:\n".bold().red());
                 }
             }
         }

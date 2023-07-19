@@ -36,10 +36,11 @@ pub async fn main(){
         .arg(
             arg!([problems] ...)
                 .help(
-                    "Files to test. \
-                    Each problem filename needs to match {problem}.{extension} where {problem} can be found from the url of the kattis problem \
-                    at open.kattis.com/problems/{problem}. \
-                    If left empty, the problem will be inferred by looking for the latest edited valid source file.",
+                    "Paths of files to test or no arguments.\nFilenames should be of the format {problem}.{ext} \
+                    where {problem} can be found from the url of the kattis problem \
+                    at open.kattis.com/problems/{problem}.\n\
+                    If left empty, the problem to run will be inferred by looking for \
+                    the latest edited valid source file in the working directory.",
                 )
                 .required(false)
                 .value_parser(NonEmptyStringValueParser::new())

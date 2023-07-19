@@ -42,6 +42,13 @@ lazy_static::lazy_static! {
     static ref ID_RE: Regex = Regex::new(r"Submission ID: (\d+)").unwrap();
 }
 
+fn display_link(url: &str) -> String {
+    format!(
+        "\u{1b}]8;;{}\u{1b}\\{}\u{1b}]8;;\u{1b}\\",
+        url, url
+    )
+}
+
 async fn get_config() -> Result<KattisConfig> {
     let mut rc = dirs::home_dir().ok_or_else(|| {
         Error::new(
@@ -55,18 +62,20 @@ async fn get_config() -> Result<KattisConfig> {
         let mut config_file = File::open(rc).await?;
         let mut config_string = String::new();
         config_file.read_to_string(&mut config_string).await?;
-        config_string = config_string.replace(": ", "=");
-        let config = configparser::ini::Ini::new().read(config_string).expect("Failed to read config file.");
+        // config_string = config_string.replace(": ", "="); // Not needed since default allows ':' for delimiter
+        let config = configparser::ini::Ini::new().read(config_string)
+            .map_err(|e| anyhow!("Failed to read .kattisrc file with error:\n{e}\nPerhaps it is corrupt?"))?;
         KattisConfig::from_config(config)
     } else {
         rc.pop();
-        Err(anyhow!(
+        let link = display_link("https://open.kattis.com/download/kattisrc");
+        bail!(
             "\
 Failed to read in a config file from your home directory.
 In order to submit code from the CLI, you need to be authenticated.
-Please go to https://open.kattis.com/download/kattisrc to download 
+Please go to {link} to download
 your personal config file, and place it in your home 
-folder ({}) as .kattisrc
+directory (detected to be {}) as .kattisrc
 
 The file should look something like this:
 [user]
@@ -77,8 +86,8 @@ token: *********
 loginurl: https://<kattis>/login
 submissionurl: https://<kattis>/submit
         ",
-            rc.to_str().unwrap()
-        ))
+            rc.to_str().unwrap_or("[Failed to detect home directory]")
+        );
     }
 }
 
