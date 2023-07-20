@@ -61,6 +61,13 @@ fn display_link_with_name(url: &str, name: &str) -> String {
     format!("\u{1b}]8;;{url}\u{1b}\\{name}\u{1b}]8;;\u{1b}\\")
 }
 
+fn name_with_maybe_link(name: &str, url: Option<&str>) -> String {
+    url.map_or_else(
+        || name.to_string(),
+        |url| display_link_with_name(url, name)
+    )
+}
+
 async fn get_config() -> Result<KattisConfig> {
     let mut rc = dirs::home_dir().ok_or_else(|| {
         Error::new(
@@ -229,6 +236,16 @@ impl SubmissionResponse {
         let re = RE.get_or_init(|| Regex::new("data-type=\"lang\".*?>(.*?)<").unwrap());
         Some(re.captures(&self.row_html)?.get(1)?.as_str())
     }
+    fn problem_slug(&self) -> Option<&str> {
+        static RE: OnceLock<Regex> = OnceLock::new();
+        let re = RE.get_or_init(|| Regex::new("data-type=\"problem\".*?href=\"(.*?)\"").unwrap());
+        Some(re.captures(&self.row_html)?.get(1)?.as_str())
+    }
+    fn submission_id(&self) -> Option<&str> {
+        static RE: OnceLock<Regex> = OnceLock::new();
+        let re = RE.get_or_init(|| Regex::new("data-submission-id=\"(.*?)\"").unwrap());
+        Some(re.captures(&self.row_html)?.get(1)?.as_str())
+    }
 }
 
 lazy_static! {
@@ -249,14 +266,25 @@ impl Display for SubmissionResponse {
                 self.total_testcases().unwrap_or("?").bold()
             )
         } else if self.status == SubmissionStatus::Accepted {
-            write!(f, "{} ", "Submission accepted!".green().bold())?;
+            let mut accepted_text: ColoredString = "Submission Accepted!".into();
+            let submission_link = self.submission_id().map(|id| format!("https://open.kattis.com/submissions/{id}"));
+            accepted_text = name_with_maybe_link(&accepted_text, submission_link.as_deref()).green().bold();
+
+            write!(f, "{accepted_text} ")?;
             if let Some(problem_name) = self.problem_name() {
-                write!(f, "{}", problem_name.bold())?;
+                write!(f, "{}", name_with_maybe_link(&problem_name.bold(),
+                                                     self.problem_slug().map(|slug| format!("https://open.kattis.com{slug}")).as_deref()))?;
                 if let Some(lang) = self.language() {
                     write!(f, " ({})", lang.bold())?;
                 }
                 if let Some(time) = self.cpu_time() {
-                    write!(f, " ran in {}s", time.bold())?;
+                    if let Some(slug) = self.problem_slug() {
+                        let url = format!("https://open.kattis.com{slug}/statistics");
+                        let seconds_with_link = display_link_with_name(&url, &format!("{time}s"));
+                        write!(f, " ran in {}", seconds_with_link.bold())?;
+                    } else {
+                        write!(f, " ran in {}s", time.bold())?;
+                    }
                 }
                 writeln!(f)?;
             }
@@ -294,31 +322,13 @@ async fn view_submission_in_terminal(client: Client, submission_id: &str) -> Res
                 ))
                 .send()
                 .await?;
-            // eprintln!("Response: {:?}", &response.text().await);
-            // exit(0);
             let r = response.json::<SubmissionResponse>().await?;
 
-            if written_first {
-                reset_line();
-            } else {
-                written_first = true;
-            } // Clear and move to start of line
+            if written_first { reset_line(); } else { written_first = true; } // Clear and move to start of line
 
-            // eprintln!("[{}][{}][{}][ ][ ]", CHECK_MARK.deref(), CHECK_MARK.deref(), X_MARK.deref());
-            // eprint!("{}", );
-            // if r.status < SubmissionStatus::Running {
-            //     eprint!("{: <10?}", r.status)
-            // } else {
-            //     eprint!("{: <10?} {}/{}", &r.status, r.solved_testcases(), r.total_testcases().unwrap_or(0))
-            // }
             eprint!("{r}");
-            // println!("{}\n", r.row_html);
-            // eprintln!("{}", r.row_html);
             if r.status.is_terminal() {
-                // reset_line();
-                // eprintln!("\nSubmission finished with status: {}", r.status);
                 info!("Queried Kattis {count} times");
-                eprintln!();
                 return Ok(());
             }
             // eprintln!("Submission still running. Checking again in 1 second...");
