@@ -272,8 +272,8 @@ impl Display for SubmissionResponse {
 
             write!(f, "{accepted_text} ")?;
             if let Some(problem_name) = self.problem_name() {
-                write!(f, "{}", name_with_maybe_link(&problem_name.bold(),
-                                                     self.problem_slug().map(|slug| format!("https://open.kattis.com{slug}")).as_deref()))?;
+                write!(f, "{}", name_with_maybe_link(problem_name,
+                                                     self.problem_slug().map(|slug| format!("https://open.kattis.com{slug}")).as_deref()).bold())?;
                 if let Some(lang) = self.language() {
                     write!(f, " ({})", lang.bold())?;
                 }
@@ -296,12 +296,14 @@ impl Display for SubmissionResponse {
                 self.solved_testcases().to_string().red().bold(),
                 "/".bold(),
                 self.total_testcases().unwrap_or("?").bold(),
-                self.status.to_string().red().bold(),
+                name_with_maybe_link(&self.status.to_string(),
+                self.submission_id().map(|id| format!("https://open.kattis.com/submissions/{id}")).as_deref()).bold().red()
             )?;
             if let Some(time) = self.cpu_time() {
                 write!(f, "{}",
                        format!(" after {}{}", time.bold(), "s".bold()).red())?;
             }
+            writeln!(f)?;
             Ok(())
         }
     }
