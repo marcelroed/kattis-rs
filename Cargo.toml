@@ -1,6 +1,6 @@
 [package]
 name = "kattis-rs"
-version = "1.6.3"
+version = "1.6.4"
 authors = ["Marcel H Rød <marcelroed@gmail.com>"]
 edition = "2021"
 homepage = "https://github.com/marcelroed/"
@@ -24,6 +24,7 @@ zip = "0"
 clap = { version = "4", features = ["suggestions", "color", "cargo"] }
 futures = "0"
 tokio = { version = "1", features = ["full"]}
+tokio-stream = "0.1"
 walkdir = "2"
 colored = "2"
 itertools = "0"

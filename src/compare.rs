@@ -147,9 +147,6 @@ mod test {
         let output = "This is my long story about going to taco bell.\nOne day I felt like I really wanted some good stuff.\nI walked to taco bell to get 0.55512312412345 tacos.".to_string();
         let key = "This is my long story about going to cracko bell.\nOne day I felt like I really wanted some good stuff.\nI walked to cracko bell to get 0.5551231241234 crack.".to_string();
         let comparisons = compare(&output, &key);
-        println!("{}", comparisons);
+        println!("{comparisons}");
     }
-
-    #[test]
-    fn test_num_diff() {}
 }

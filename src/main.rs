@@ -1,5 +1,6 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 
+use crate::checker::{find_source_from_path, Problem, ProblemSource};
 use anyhow::{Context, Result};
 use clap::builder::NonEmptyStringValueParser;
 use clap::parser::ValueSource;
@@ -8,9 +9,7 @@ use colored::Colorize;
 use log::{info, warn};
 use std::path::Path;
 use std::sync::OnceLock;
-
-use crate::checker::{find_source_from_path, Problem, ProblemSource};
-use crate::submit::SubmissionViewer;
+use submit::viewer;
 
 mod checker;
 mod compare;
@@ -18,7 +17,6 @@ mod fetch;
 mod submit;
 
 pub static RECURSE_DEPTH: OnceLock<usize> = OnceLock::new();
-
 
 #[allow(clippy::cognitive_complexity)]
 fn build_cli() -> Command {
@@ -74,13 +72,13 @@ fn build_cli() -> Command {
                 // .requires("submit")  // Warn instead of disallowing
                 .action(ArgAction::Set)
                 // .value_hint(ValueHint)
-                .value_parser(submit::SubmissionViewerParser)
+                .value_parser(viewer::SubmissionViewerParser)
         )
 }
 
 /// # Panics
 /// Panics if something goes wrong.
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 pub async fn main() {
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "warn");
@@ -97,7 +95,7 @@ pub async fn main() {
     let force_flag: bool = matches.get_one("force").copied().unwrap_or(false);
     let submit_flag: bool = matches.get_one("submit").copied().unwrap_or(false);
     let recurse_depth: usize = matches.get_one("recurse").copied().unwrap_or(0);
-    let submission_viewer: SubmissionViewer =
+    let submission_viewer: viewer::SubmissionViewerType =
         matches.get_one("submission-viewer").copied().unwrap();
 
     if matches!(
@@ -122,7 +120,8 @@ pub async fn main() {
         .collect();
 
     let problem_sources: Vec<ProblemSource> = {
-        if problem_args.is_empty() { // Look for newest source file
+        if problem_args.is_empty() {
+            // Look for newest source file
             match checker::find_newest_source() {
                 Ok(problem_source) => vec![problem_source],
                 Err(e) => {
@@ -136,8 +135,10 @@ pub async fn main() {
                     std::process::exit(1);
                 }
             }
-        } else { // Use the source files specified
-            problem_args.into_iter()
+        } else {
+            // Use the source files specified
+            problem_args
+                .into_iter()
                 .map(Path::new)
                 .map(find_source_from_path)
                 .collect::<Result<Vec<_>>>()
@@ -152,14 +153,17 @@ pub async fn main() {
         .map(|problem| problem.set_submit(submit_flag))
         .collect();
 
+    let mut failed_any: bool = false;
     checker::check_problems(problems, force_flag, submission_viewer)
         .await
         .into_iter()
-        .for_each(|(problem, res)| {
-            if let Err(e) = res {
-                eprintln!("Failed to check problem {}: {e}", problem.problem_name);
-            }
+        .for_each(|(problem, res)| match res {
+            Err(e) => eprintln!("Failed to check problem {}: {e}", problem.problem_name),
+            Ok(b) if !b => failed_any = true,
+            _ => {}
         });
+
+    std::process::exit(i32::from(failed_any));
 }
 
 #[cfg(test)]

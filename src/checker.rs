@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 
 use crate::compare::{compare, ComparisonResult};
-use crate::submit::{submit, SubmissionViewer};
+use crate::submit::submit;
 use enum_iterator::{all, Sequence};
 use futures::executor::block_on;
 use guard::guard;
@@ -32,6 +32,7 @@ use std::os::unix::process::ExitStatusExt;
 use log::info;
 use std::time::SystemTime;
 use walkdir::DirEntry;
+use crate::submit::viewer::SubmissionViewerType;
 
 #[derive(Debug)]
 pub struct Problem {
@@ -57,8 +58,8 @@ impl Problem {
 pub async fn check_problems(
     problems: Vec<Problem>,
     force: bool,
-    submission_viewer: SubmissionViewer,
-) -> Vec<(Problem, Result<()>)> {
+    submission_viewer: SubmissionViewerType,
+) -> Vec<(Problem, Result<bool>)> {
     let handles = problems.into_iter().map(|mut prob| {
         spawn(async move {
             let checked = check_problem(&mut prob, force, submission_viewer).await;
@@ -166,12 +167,11 @@ impl Program {
                 if output.status.success() {
                     self.compiled = Some(Ok(()));
                     self.binary = Some(output_path.clone());
-                    Ok(())
                 } else {
                     let mut err = format!("{}\n", self.name());
                     err.push_str(&String::from_utf8(output.stderr).unwrap());
                     self.compiled = Some(Err(err));
-                    bail!("Compile Error!")
+                    //bail!("Compile Error!")
                 }
             }
             Lang::Rust => {
@@ -196,21 +196,20 @@ impl Program {
                 if output.status.success() {
                     self.compiled = Some(Ok(()));
                     self.binary = Some(output_path.clone());
-                    Ok(())
                 } else {
                     let mut err =
                         format!("{}\n", self.source.file_name().unwrap().to_str().unwrap());
                     err.push_str(&String::from_utf8_lossy(&output.stderr));
                     self.compiled = Some(Err(err));
-                    Err(anyhow!("Compile Error!"))
+                    // bail!("Rust Compile Error!");
                 }
             }
             Lang::Python | Lang::Bash => {
                 self.binary = Some(self.source.clone());
                 self.compiled = Some(Ok(()));
-                Ok(())
             }
         }
+        Ok(())
     }
 
     fn spawn_process(&self, stdin_file: std::fs::File) -> Result<Child> {
@@ -277,7 +276,7 @@ impl Program {
     pub async fn submit(
         &self,
         problem_name: &str,
-        submission_viewer: SubmissionViewer,
+        submission_viewer: SubmissionViewerType,
     ) -> Result<()> {
         submit(
             format!("{}", &self.lang),
@@ -406,6 +405,7 @@ pub struct ProblemSource {
 
 pub fn find_newest_source() -> Result<ProblemSource> {
     let problem_path = walkdir::WalkDir::new(".")
+        .follow_links(true)
         .max_depth(*RECURSE_DEPTH.get().unwrap())
         .into_iter()
         .take(100_000) // Look through at most 100_000 files
@@ -495,8 +495,8 @@ lazy_static::lazy_static! {
 async fn check_problem(
     problem: &mut Problem,
     force: bool,
-    submission_viewer: SubmissionViewer,
-) -> Result<()> {
+    submission_viewer: SubmissionViewerType,
+) -> Result<bool> {
     let should_submit = problem.submit;
     // Fetch problem IO
     let future_io = fetch::problem(&problem.problem_name);
@@ -566,15 +566,18 @@ async fn check_problem(
                 {
                     eprintln!("{}{e}", "Error:\n".bold().red());
                 }
+            } else {
+                return Ok(!failed_any)
             }
         }
         ProblemInstanceResult::CompileError(compile_error) => {
             eprintln!("{compile_error}");
+            return Ok(false);
         }
     }
     info!("Print results");
 
-    Ok(())
+    Ok(true)
 }
 
 fn check_problem_output(pio: &ProblemIO, out: &Output) -> RunResult {
