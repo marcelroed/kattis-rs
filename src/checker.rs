@@ -22,7 +22,6 @@ use crate::compare::{compare, ComparisonResult};
 use crate::submit::submit;
 use enum_iterator::{all, Sequence};
 use futures::executor::block_on;
-use guard::guard;
 use itertools::Itertools;
 use tokio::io::AsyncReadExt;
 
@@ -432,9 +431,8 @@ pub fn find_newest_source() -> Result<ProblemSource> {
         .ok_or_else(|| anyhow!("No source files found."))?
         .into_path(); // Get the path of the file
 
-    guard!(let Some(file_stem) = problem_path.file_stem() else {
-        bail!("No file stem found for file {problem_path:?}.");
-    });
+    let file_stem = problem_path.file_stem()
+        .ok_or_else(|| anyhow!("No file stem found for file {problem_path:?}."))?;
 
     let problem_name = file_stem.to_string_lossy();
 

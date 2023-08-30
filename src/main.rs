@@ -111,7 +111,7 @@ pub async fn main() {
     }
 
     RECURSE_DEPTH.set(recurse_depth).unwrap();
-    info!("Recursing {} levels into directories.", recurse_depth);
+    info!("Recursing {recurse_depth} levels into directories.");
 
     let problem_args: Vec<&str> = matches
         .get_many::<String>("problems")
