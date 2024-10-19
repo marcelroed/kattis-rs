@@ -49,7 +49,7 @@ The simplest use case for the CLI is when you want to test and submit the latest
 ```sh
 $ kattis -s
 ```
-This command will find the latest edited valid file in the current directory and test it using input and output from [www.open.kattis.com](https://open.kattis.com/), then submit it if it passes.
+This command will find the latest edited valid file in the current directory and test it using input and output from [open.kattis.com](https://open.kattis.com/), then submit it if it passes.
 
 ## Installation
 ### Using Cargo
